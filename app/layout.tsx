@@ -9,8 +9,8 @@ const quicksand = Quicksand({
 })
 
 export const metadata: Metadata = {
-  title: "Cozy Bites - Jellycat-Inspired Food Ordering",
-  description: "A soft, playful, and clean food ordering web page inspired by Jellycat",
+  title: "Sunny的点菜平台",
+  description: "美味佳肴在线点餐平台",
     generator: 'v0.dev'
 }
 

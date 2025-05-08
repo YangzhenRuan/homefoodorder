@@ -83,7 +83,7 @@ export default function AdminPage() {
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold">订单管理</h1>
+          <h1 className="text-xl font-bold text-emerald-600">Sunny的点菜平台 - 管理后台</h1>
         </div>
         <Button onClick={loadOrders} variant="outline" className="flex items-center gap-2">
           <RefreshCw className="h-4 w-4" />

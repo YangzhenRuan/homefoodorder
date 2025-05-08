@@ -542,89 +542,78 @@ export default function FoodOrderingPage() {
   const addNewDish = async () => {
     // Validate form
     if (!newDish.name || !newDish.description || newDish.price <= 0) {
-      alert("请填写所有必填字段")
-      return
+      alert("请填写所有必填字段");
+      return;
+    }
+
+    if (newDish.categoryIds.length === 0) {
+      alert("请至少选择一个分类");
+      return;
     }
 
     try {
-      // Create new dish with generated ID
-      const newId = Math.max(0, ...dishes.map((d) => d.id)) + 1
-
       // Use image preview if available, otherwise use placeholder
-      const dishImage = imagePreview || "/placeholder.svg"
+      const dishImage = imagePreview || "/placeholder.svg";
 
-      const dishToAdd: Dish = {
-        id: newId,
+      // 同步到数据库
+      console.log("正在保存菜品到数据库:", {
         name: newDish.name,
         description: newDish.description,
         price: newDish.price,
         image: dishImage,
-        categoryIds: newDish.categoryIds,
+        category_ids: newDish.categoryIds
+      });
+      
+      const result = await dishesTable.create({
+        name: newDish.name,
+        description: newDish.description,
+        price: newDish.price,
+        image: dishImage,
+        category_ids: newDish.categoryIds
+      });
+      
+      if (result && result.length > 0) {
+        // 获取插入成功的菜品的第一个ID
+        const newId = result[0]?.id || Math.max(0, ...dishes.map((d) => d.id)) + 1;
+        
+        // 创建新菜品对象
+        const dishToAdd: Dish = {
+          id: newId,
+          name: newDish.name,
+          description: newDish.description,
+          price: newDish.price,
+          image: dishImage,
+          categoryIds: newDish.categoryIds,
+        };
+        
+        // 保存到本地状态
+        setDishes((prev) => [...prev, dishToAdd]);
+        
+        // Reset form
+        setNewDish({
+          name: "",
+          description: "",
+          price: 0,
+          image: "",
+          categoryIds: [],
+        });
+        setImageFile(null);
+        setImagePreview("");
+        setShowAddDishModal(false);
+        
+        alert("菜品添加成功");
       }
-
-      // 保存到本地状态
-      setDishes((prev) => [...prev, dishToAdd])
-
-      // 同步到数据库
-      if (newDish.categoryIds.length > 0) {
-        try {
-          console.log("正在保存菜品到数据库:", {
-            name: newDish.name,
-            description: newDish.description,
-            price: newDish.price,
-            image: dishImage,
-            category_ids: newDish.categoryIds
-          })
-          
-          const result = await dishesTable.create({
-            name: newDish.name,
-            description: newDish.description,
-            price: newDish.price,
-            image: dishImage,
-            category_ids: newDish.categoryIds
-          })
-          
-          console.log("菜品已保存到数据库，返回结果:", result)
-        } catch (error: any) {
-          console.error("保存菜品到数据库失败:", error)
-          
-          // 尝试获取更详细的错误信息
-          let errorDetail = ''
-          if (error.code) errorDetail += ` 错误代码: ${error.code}.`
-          if (error.message) errorDetail += ` 消息: ${error.message}.`
-          if (error.details) errorDetail += ` 详情: ${error.details}.`
-          if (error.hint) errorDetail += ` 提示: ${error.hint}.`
-          
-          alert(`同步到数据库失败: ${errorDetail || '未知错误'}, 但已保存到本地`)
-          
-          // 测试数据库连接
-          try {
-            const response = await fetch('/api/test-supabase')
-            const testResult = await response.json()
-            console.log("数据库连接测试结果:", testResult)
-          } catch (testError) {
-            console.error("测试数据库连接时出错:", testError)
-          }
-        }
-      } else {
-        alert("请至少选择一个分类")
-        return
-      }
-
-      // Reset form
-      setNewDish({
-        name: "",
-        description: "",
-        price: 0,
-        image: "",
-        categoryIds: [],
-      })
-      setImageFile(null)
-      setImagePreview("")
-      setShowAddDishModal(false)
     } catch (error: any) {
-      console.error("添加菜品失败:", error)
-      alert(`添加菜品失败: ${error.message || '未知错误'}`)
+      console.error("添加菜品失败:", error);
+      
+      // 尝试获取更详细的错误信息
+      let errorDetail = '';
+      if (error.code) errorDetail += ` 错误代码: ${error.code}.`;
+      if (error.message) errorDetail += ` 消息: ${error.message}.`;
+      if (error.details) errorDetail += ` 详情: ${error.details}.`;
+      if (error.hint) errorDetail += ` 提示: ${error.hint}.`;
+      
+      alert(`添加菜品失败: ${errorDetail || '未知错误'}`);
     }
   }
 
@@ -658,18 +647,28 @@ export default function FoodOrderingPage() {
         color: newCategory.color,
       }
 
-      // 保存到本地状态
-      setCategories((prev) => [...prev, categoryToAdd])
-
       // 同步到数据库
       try {
         console.log("正在保存分类到数据库:", categoryToAdd)
         const result = await categoriesTable.create({
           id: categoryId,
           name: newCategory.name,
-          color: newCategory.color
+          color: newCategory.color,
+          description: `${newCategory.name}分类`
         })
-        console.log("分类已保存到数据库，返回结果:", result)
+        
+        if (result) {
+          // 保存到本地状态
+          setCategories((prev) => [...prev, categoryToAdd])
+          
+          // Reset form
+          setNewCategory({
+            name: "",
+            color: categoryColors[0],
+          })
+          
+          alert("分类创建成功")
+        }
       } catch (error: any) {
         console.error("保存分类到数据库失败:", error)
         
@@ -680,23 +679,8 @@ export default function FoodOrderingPage() {
         if (error.details) errorDetail += ` 详情: ${error.details}.`
         if (error.hint) errorDetail += ` 提示: ${error.hint}.`
         
-        alert(`同步到数据库失败: ${errorDetail || '未知错误'}, 但已保存到本地`)
-        
-        // 测试数据库连接
-        try {
-          const response = await fetch('/api/test-supabase')
-          const testResult = await response.json()
-          console.log("数据库连接测试结果:", testResult)
-        } catch (testError) {
-          console.error("测试数据库连接时出错:", testError)
-        }
+        alert(`创建分类失败: ${errorDetail || '未知错误'}`)
       }
-
-      // Reset form
-      setNewCategory({
-        name: "",
-        color: categoryColors[0],
-      })
     } catch (error: any) {
       console.error("添加分类失败:", error)
       alert(`添加分类失败: ${error.message || '未知错误'}`)
@@ -705,34 +689,63 @@ export default function FoodOrderingPage() {
 
   // Delete category
   const deleteCategory = async (categoryId: string) => {
+    if (!confirm(`确定要删除"${getCategoryById(categoryId)?.name || categoryId}"分类吗？这将同时删除该分类下的所有菜品！`)) {
+      return;
+    }
+
     try {
-      // 从本地状态中移除
-      setCategories((prev) => prev.filter((cat) => cat.id !== categoryId))
+      // 从数据库中删除
+      await categoriesTable.delete(categoryId);
+      
+      // 获取该分类下的所有菜品ID
+      const dishesToRemove = dishes.filter(dish => 
+        dish.categoryIds.includes(categoryId)
+      ).map(dish => dish.id);
+      
+      // 从本地状态中移除分类
+      setCategories((prev) => prev.filter((cat) => cat.id !== categoryId));
 
       // 从所有菜品中移除此分类
-      setDishes((prev) =>
-        prev.map((dish) => ({
+      setDishes((prev) => {
+        // 首先移除类别ID
+        const updatedDishes = prev.map((dish) => ({
           ...dish,
           categoryIds: dish.categoryIds.filter((id) => id !== categoryId),
-        })),
-      )
-
-      // 从数据库中删除
-      try {
-        await categoriesTable.delete(categoryId)
-        console.log("分类已从数据库删除")
-      } catch (error) {
-        console.error("从数据库删除分类失败:", error)
-        alert("从数据库删除失败，但已从本地移除")
-      }
+        }));
+        
+        // 然后过滤掉没有任何类别的菜品
+        return updatedDishes.filter(dish => dish.categoryIds.length > 0);
+      });
 
       // If this was the active category, reset filter
       if (activeCategory === categoryId) {
-        setActiveCategory(null)
+        setActiveCategory(null);
       }
-    } catch (error) {
-      console.error("删除分类失败:", error)
-      alert("删除分类失败，请重试")
+      
+      alert("分类删除成功");
+    } catch (error: any) {
+      console.error("删除分类失败:", error);
+      alert(`删除分类失败: ${error.message || '未知错误'}`);
+    }
+  }
+
+  // Delete dish
+  const deleteDish = async (dishId: number) => {
+    if (!confirm("确定要删除这个菜品吗？")) {
+      return;
+    }
+
+    try {
+      // 删除菜品
+      await dishesTable.delete(dishId);
+      
+      // 从本地状态中移除
+      setDishes((prev) => prev.filter((dish) => dish.id !== dishId));
+      
+      alert("菜品删除成功");
+    } catch (error: any) {
+      console.error("删除菜品失败:", error);
+      alert(`删除菜品失败: ${error.message || '未知错误'}`);
     }
   }
 
@@ -1111,7 +1124,7 @@ export default function FoodOrderingPage() {
       />
 
       <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-2 flex justify-between items-center shadow-sm">
-        <h1 className="text-xl font-bold text-emerald-600">美食点餐系统</h1>
+        <h1 className="text-xl font-bold text-emerald-600">Sunny的点菜平台</h1>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
@@ -1140,7 +1153,7 @@ export default function FoodOrderingPage() {
         <div className="container mx-auto px-4 py-4">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-emerald-700">
-              <span className="text-orange-400">Tasty</span> Bites
+              <span className="text-orange-400">Sunny</span> 点菜平台
             </h1>
             <div className="flex gap-2">
               <Button
@@ -1260,6 +1273,17 @@ export default function FoodOrderingPage() {
                           })}
                         </div>
                       )}
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 left-2 h-8 w-8 rounded-full opacity-80 hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteDish(dish.id);
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
                     </div>
                     <CardContent className="p-4">
                       <div className="flex justify-between items-start mb-2">

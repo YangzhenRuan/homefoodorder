@@ -39,6 +39,17 @@ export const categoriesTable = {
     color: string,
     description?: string
   }) => {
+    // 检查是否已存在该ID的分类
+    const { data: existingCategory } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('id', category.id)
+      .single();
+      
+    if (existingCategory) {
+      throw new Error(`分类ID '${category.id}' 已存在`);
+    }
+    
     const { data, error } = await supabase
       .from('categories')
       .insert([{
@@ -49,19 +60,51 @@ export const categoriesTable = {
       }])
       .select()
     
-    if (error) throw error
+    if (error) {
+      console.error('创建分类错误:', error);
+      throw error;
+    }
     return data?.[0]
   },
 
   // 删除分类
   delete: async (id: string) => {
+    // 先检查是否有菜品关联此分类
+    const { data: relatedDishes, error: checkError } = await supabase
+      .from('dishes')
+      .select('id')
+      .eq('category_id', id);
+    
+    if (checkError) {
+      console.error('检查关联菜品错误:', checkError);
+      throw checkError;
+    }
+    
+    // 如果有关联菜品，先删除这些菜品
+    if (relatedDishes && relatedDishes.length > 0) {
+      const { error: deleteRelatedError } = await supabase
+        .from('dishes')
+        .delete()
+        .eq('category_id', id);
+      
+      if (deleteRelatedError) {
+        console.error('删除关联菜品错误:', deleteRelatedError);
+        throw deleteRelatedError;
+      }
+    }
+    
+    // 删除分类
     const { error } = await supabase
       .from('categories')
       .delete()
-      .eq('id', id)
+      .eq('id', id);
     
-    if (error) throw error
-    return true
+    if (error) {
+      console.error('删除分类错误:', error);
+      throw error;
+    }
+    
+    return true;
   }
 }
 
@@ -110,6 +153,23 @@ export const dishesTable = {
     image: string,
     category_ids: string[]
   }) => {
+    if (!dish.category_ids || dish.category_ids.length === 0) {
+      throw new Error('至少需要选择一个分类');
+    }
+    
+    // 检查所有分类是否存在
+    for (const categoryId of dish.category_ids) {
+      const { data, error } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', categoryId)
+        .single();
+        
+      if (error || !data) {
+        throw new Error(`分类 '${categoryId}' 不存在，请先创建此分类`);
+      }
+    }
+    
     // 为每个分类创建一条记录
     const promises = dish.category_ids.map(async (categoryId) => {
       const { data, error } = await supabase
@@ -123,12 +183,20 @@ export const dishesTable = {
         }])
         .select()
       
-      if (error) throw error
+      if (error) {
+        console.error('创建菜品错误:', error);
+        throw error;
+      }
       return data?.[0]
     })
 
-    const results = await Promise.all(promises)
-    return results
+    try {
+      const results = await Promise.all(promises)
+      return results
+    } catch (error) {
+      console.error('批量创建菜品错误:', error);
+      throw error;
+    }
   },
 
   // 删除菜品
@@ -138,7 +206,11 @@ export const dishesTable = {
       .delete()
       .eq('id', id)
     
-    if (error) throw error
+    if (error) {
+      console.error('删除菜品错误:', error);
+      throw error;
+    }
+    
     return true
   }
 }

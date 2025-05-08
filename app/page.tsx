@@ -984,6 +984,31 @@ export default function FoodOrderingPage() {
 
   return (
     <div className="relative min-h-screen bg-gray-50">
+      {/* 加菜弹窗 */}
+      <AddDishModal
+        show={showAddDishModal}
+        onClose={() => setShowAddDishModal(false)}
+        newDish={newDish}
+        handleNewDishChange={handleNewDishChange}
+        toggleDishCategory={toggleDishCategory}
+        categories={categories}
+        imagePreview={imagePreview}
+        handleImageChange={handleImageChange}
+        addNewDish={addNewDish}
+      />
+
+      {/* 管理分类弹窗 */}
+      <CategoryModal
+        show={showCategoryModal}
+        onClose={() => setShowCategoryModal(false)}
+        categories={categories}
+        newCategory={newCategory}
+        handleNewCategoryChange={handleNewCategoryChange}
+        addNewCategory={addNewCategory}
+        deleteCategory={deleteCategory}
+        categoryColors={categoryColors}
+      />
+
       <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-2 flex justify-between items-center shadow-sm">
         <h1 className="text-xl font-bold text-emerald-600">美食点餐系统</h1>
         <div className="flex items-center gap-2">
@@ -1012,9 +1037,31 @@ export default function FoodOrderingPage() {
       <div className="flex flex-col min-h-screen bg-emerald-50 pt-14">
         {/* 店铺信息 */}
         <div className="container mx-auto px-4 py-4">
-          <h1 className="text-2xl font-bold text-emerald-700">
-            <span className="text-orange-400">Tasty</span> Bites
-          </h1>
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-bold text-emerald-700">
+              <span className="text-orange-400">Tasty</span> Bites
+            </h1>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                onClick={() => setShowAddDishModal(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                加菜
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                onClick={() => setShowCategoryModal(true)}
+              >
+                <Tag className="h-4 w-4 mr-2" />
+                管理分类
+              </Button>
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-1">
@@ -1241,6 +1288,249 @@ function Cart({
           </Button>
         </div>
       )}
+    </div>
+  )
+}
+
+// 加菜弹窗组件
+function AddDishModal({
+  show,
+  onClose,
+  newDish,
+  handleNewDishChange,
+  toggleDishCategory,
+  categories,
+  imagePreview,
+  handleImageChange,
+  addNewDish,
+}: {
+  show: boolean
+  onClose: () => void
+  newDish: Omit<Dish, "id">
+  handleNewDishChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void
+  toggleDishCategory: (categoryId: string) => void
+  categories: Category[]
+  imagePreview: string
+  handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  addNewDish: () => void
+}) {
+  if (!show) return null
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold text-emerald-700">添加新菜品</h2>
+            <Button variant="ghost" size="sm" onClick={onClose} className="text-gray-500">
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+        
+        <div className="p-4 space-y-4">
+          <div>
+            <Label htmlFor="dish-name">菜品名称</Label>
+            <Input
+              id="dish-name"
+              name="name"
+              value={newDish.name}
+              onChange={handleNewDishChange}
+              placeholder="输入菜品名称"
+              className="mt-1"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="dish-description">描述</Label>
+            <Textarea
+              id="dish-description"
+              name="description"
+              value={newDish.description}
+              onChange={handleNewDishChange}
+              placeholder="输入菜品描述"
+              className="mt-1"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="dish-price">价格</Label>
+            <Input
+              id="dish-price"
+              name="price"
+              type="number"
+              step="0.01"
+              min="0"
+              value={newDish.price === 0 ? "" : newDish.price}
+              onChange={handleNewDishChange}
+              placeholder="输入价格"
+              className="mt-1"
+            />
+          </div>
+          
+          <div>
+            <Label>分类</Label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {categories.map((category) => (
+                <div key={category.id} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`category-${category.id}`}
+                    checked={newDish.categoryIds.includes(category.id)}
+                    onCheckedChange={() => toggleDishCategory(category.id)}
+                  />
+                  <Label
+                    htmlFor={`category-${category.id}`}
+                    className="cursor-pointer text-sm font-normal"
+                  >
+                    {category.name}
+                  </Label>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <div>
+            <Label>图片</Label>
+            <div className="mt-1">
+              {imagePreview ? (
+                <div className="relative aspect-video rounded-lg overflow-hidden mb-2">
+                  <Image src={imagePreview} alt="Preview" fill className="object-cover" />
+                </div>
+              ) : null}
+              
+              <div>
+                <input
+                  type="file"
+                  id="dish-image"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImageChange}
+                />
+                <label htmlFor="dish-image">
+                  <Button variant="outline" size="sm" className="mt-1" asChild>
+                    <span>
+                      <Camera className="h-4 w-4 mr-2" />
+                      {imagePreview ? "更换图片" : "上传图片"}
+                    </span>
+                  </Button>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="p-4 border-t border-gray-200 flex justify-end">
+          <Button onClick={addNewDish} className="bg-emerald-500 hover:bg-emerald-600 text-white">
+            保存菜品
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 管理分类弹窗组件
+function CategoryModal({
+  show,
+  onClose,
+  categories,
+  newCategory,
+  handleNewCategoryChange,
+  addNewCategory,
+  deleteCategory,
+  categoryColors,
+}: {
+  show: boolean
+  onClose: () => void
+  categories: Category[]
+  newCategory: Omit<Category, "id">
+  handleNewCategoryChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void
+  addNewCategory: () => void
+  deleteCategory: (id: string) => void
+  categoryColors: string[]
+}) {
+  if (!show) return null
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold text-emerald-700">管理分类</h2>
+            <Button variant="ghost" size="sm" onClick={onClose} className="text-gray-500">
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="p-4">
+          <h3 className="font-medium mb-2 text-emerald-700">添加新分类</h3>
+          <div className="space-y-3 mb-6">
+            <div>
+              <Label htmlFor="category-name">分类名称</Label>
+              <Input
+                id="category-name"
+                name="name"
+                value={newCategory.name}
+                onChange={handleNewCategoryChange}
+                placeholder="输入分类名称"
+                className="mt-1"
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="category-color">颜色</Label>
+              <div className="grid grid-cols-6 gap-2 mt-1">
+                {categoryColors.map((color, index) => (
+                  <div
+                    key={index}
+                    className={`h-8 w-8 rounded-full cursor-pointer ${color} ${
+                      newCategory.color === color ? 'ring-2 ring-offset-2 ring-emerald-500' : ''
+                    }`}
+                    onClick={() => handleNewCategoryChange({
+                      target: { name: 'color', value: color }
+                    } as React.ChangeEvent<HTMLInputElement>)}
+                  />
+                ))}
+              </div>
+            </div>
+            
+            <div className="pt-2">
+              <Button
+                onClick={addNewCategory}
+                disabled={!newCategory.name}
+                className="bg-emerald-500 hover:bg-emerald-600 text-white"
+              >
+                添加分类
+              </Button>
+            </div>
+          </div>
+          
+          <h3 className="font-medium mb-2 text-emerald-700">现有分类</h3>
+          <div className="space-y-2">
+            {categories.length === 0 ? (
+              <p className="text-sm text-gray-500">暂无分类</p>
+            ) : (
+              categories.map((category) => (
+                <div key={category.id} className="flex items-center justify-between p-2 border border-gray-200 rounded-lg">
+                  <div className="flex items-center">
+                    <div className={`h-6 w-6 rounded-full mr-2 ${category.color}`} />
+                    <span>{category.name}</span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => deleteCategory(category.id)}
+                    className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

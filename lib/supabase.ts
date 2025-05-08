@@ -30,6 +30,38 @@ export const categoriesTable = {
     
     if (error) throw error
     return data
+  },
+
+  // 创建新分类
+  create: async (category: {
+    id: string,
+    name: string,
+    color: string,
+    description?: string
+  }) => {
+    const { data, error } = await supabase
+      .from('categories')
+      .insert([{
+        id: category.id,
+        name: category.name,
+        color: category.color,
+        description: category.description || `${category.name}分类`
+      }])
+      .select()
+    
+    if (error) throw error
+    return data?.[0]
+  },
+
+  // 删除分类
+  delete: async (id: string) => {
+    const { error } = await supabase
+      .from('categories')
+      .delete()
+      .eq('id', id)
+    
+    if (error) throw error
+    return true
   }
 }
 
@@ -68,6 +100,46 @@ export const dishesTable = {
     
     if (error) throw error
     return data
+  },
+
+  // 创建新菜品
+  create: async (dish: {
+    name: string,
+    description: string,
+    price: number,
+    image: string,
+    category_ids: string[]
+  }) => {
+    // 为每个分类创建一条记录
+    const promises = dish.category_ids.map(async (categoryId) => {
+      const { data, error } = await supabase
+        .from('dishes')
+        .insert([{
+          name: dish.name,
+          description: dish.description,
+          price: dish.price,
+          image: dish.image,
+          category_id: categoryId
+        }])
+        .select()
+      
+      if (error) throw error
+      return data?.[0]
+    })
+
+    const results = await Promise.all(promises)
+    return results
+  },
+
+  // 删除菜品
+  delete: async (id: number) => {
+    const { error } = await supabase
+      .from('dishes')
+      .delete()
+      .eq('id', id)
+    
+    if (error) throw error
+    return true
   }
 }
 
@@ -104,5 +176,17 @@ export const ordersTable = {
     
     if (error) throw error
     return data
+  },
+
+  // 更新订单图片
+  updateImages: async (id: string, images: string[]) => {
+    const { data, error } = await supabase
+      .from('orders')
+      .update({ images })
+      .eq('id', id)
+      .select()
+    
+    if (error) throw error
+    return data?.[0]
   }
 } 

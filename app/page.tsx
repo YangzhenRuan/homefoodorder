@@ -165,8 +165,8 @@ const categoryColors = [
   "bg-sky-300",
 ]
 
-// 新增导入Supabase客户端
-import { supabase } from "@/lib/supabase"
+// 新增导入Supabase客户端和表操作函数
+import { supabase, categoriesTable, dishesTable, ordersTable } from "@/lib/supabase"
 
 export default function FoodOrderingPage() {
   const [dishes, setDishes] = useState<Dish[]>(initialDishes)
@@ -539,42 +539,67 @@ export default function FoodOrderingPage() {
   }
 
   // Add new dish
-  const addNewDish = () => {
+  const addNewDish = async () => {
     // Validate form
     if (!newDish.name || !newDish.description || newDish.price <= 0) {
-      alert("Please fill in all required fields")
+      alert("请填写所有必填字段")
       return
     }
 
-    // Create new dish with generated ID
-    const newId = Math.max(0, ...dishes.map((d) => d.id)) + 1
+    try {
+      // Create new dish with generated ID
+      const newId = Math.max(0, ...dishes.map((d) => d.id)) + 1
 
-    // Use image preview if available, otherwise use placeholder
-    const dishImage = imagePreview || "/placeholder.svg"
+      // Use image preview if available, otherwise use placeholder
+      const dishImage = imagePreview || "/placeholder.svg"
 
-    const dishToAdd: Dish = {
-      id: newId,
-      name: newDish.name,
-      description: newDish.description,
-      price: newDish.price,
-      image: dishImage,
-      categoryIds: newDish.categoryIds,
+      const dishToAdd: Dish = {
+        id: newId,
+        name: newDish.name,
+        description: newDish.description,
+        price: newDish.price,
+        image: dishImage,
+        categoryIds: newDish.categoryIds,
+      }
+
+      // 保存到本地状态
+      setDishes((prev) => [...prev, dishToAdd])
+
+      // 同步到数据库
+      if (newDish.categoryIds.length > 0) {
+        try {
+          await dishesTable.create({
+            name: newDish.name,
+            description: newDish.description,
+            price: newDish.price,
+            image: dishImage,
+            category_ids: newDish.categoryIds
+          })
+          console.log("菜品已保存到数据库")
+        } catch (error) {
+          console.error("保存菜品到数据库失败:", error)
+          alert("同步到数据库失败，但已保存到本地")
+        }
+      } else {
+        alert("请至少选择一个分类")
+        return
+      }
+
+      // Reset form
+      setNewDish({
+        name: "",
+        description: "",
+        price: 0,
+        image: "",
+        categoryIds: [],
+      })
+      setImageFile(null)
+      setImagePreview("")
+      setShowAddDishModal(false)
+    } catch (error) {
+      console.error("添加菜品失败:", error)
+      alert("添加菜品失败，请重试")
     }
-
-    // Add to dishes array
-    setDishes((prev) => [...prev, dishToAdd])
-
-    // Reset form
-    setNewDish({
-      name: "",
-      description: "",
-      price: 0,
-      image: "",
-      categoryIds: [],
-    })
-    setImageFile(null)
-    setImagePreview("")
-    setShowAddDishModal(false)
   }
 
   // Handle new category form change
@@ -584,54 +609,86 @@ export default function FoodOrderingPage() {
   }
 
   // Add new category
-  const addNewCategory = () => {
+  const addNewCategory = async () => {
     // Validate form
     if (!newCategory.name) {
-      alert("Please enter a category name")
+      alert("请输入分类名称")
       return
     }
 
-    // Create new category with generated ID
-    const categoryId = newCategory.name.toLowerCase().replace(/\s+/g, "-")
+    try {
+      // Create new category with generated ID
+      const categoryId = newCategory.name.toLowerCase().replace(/\s+/g, "-")
 
-    // Check if category with this ID already exists
-    if (categories.some((cat) => cat.id === categoryId)) {
-      alert("A category with this name already exists")
-      return
+      // Check if category with this ID already exists
+      if (categories.some((cat) => cat.id === categoryId)) {
+        alert("此名称的分类已存在")
+        return
+      }
+
+      const categoryToAdd: Category = {
+        id: categoryId,
+        name: newCategory.name,
+        color: newCategory.color,
+      }
+
+      // 保存到本地状态
+      setCategories((prev) => [...prev, categoryToAdd])
+
+      // 同步到数据库
+      try {
+        await categoriesTable.create({
+          id: categoryId,
+          name: newCategory.name,
+          color: newCategory.color
+        })
+        console.log("分类已保存到数据库")
+      } catch (error) {
+        console.error("保存分类到数据库失败:", error)
+        alert("同步到数据库失败，但已保存到本地")
+      }
+
+      // Reset form
+      setNewCategory({
+        name: "",
+        color: categoryColors[0],
+      })
+    } catch (error) {
+      console.error("添加分类失败:", error)
+      alert("添加分类失败，请重试")
     }
-
-    const categoryToAdd: Category = {
-      id: categoryId,
-      name: newCategory.name,
-      color: newCategory.color,
-    }
-
-    // Add to categories array
-    setCategories((prev) => [...prev, categoryToAdd])
-
-    // Reset form
-    setNewCategory({
-      name: "",
-      color: categoryColors[0],
-    })
   }
 
   // Delete category
-  const deleteCategory = (categoryId: string) => {
-    // Remove category from categories array
-    setCategories((prev) => prev.filter((cat) => cat.id !== categoryId))
+  const deleteCategory = async (categoryId: string) => {
+    try {
+      // 从本地状态中移除
+      setCategories((prev) => prev.filter((cat) => cat.id !== categoryId))
 
-    // Remove category from all dishes
-    setDishes((prev) =>
-      prev.map((dish) => ({
-        ...dish,
-        categoryIds: dish.categoryIds.filter((id) => id !== categoryId),
-      })),
-    )
+      // 从所有菜品中移除此分类
+      setDishes((prev) =>
+        prev.map((dish) => ({
+          ...dish,
+          categoryIds: dish.categoryIds.filter((id) => id !== categoryId),
+        })),
+      )
 
-    // If this was the active category, reset filter
-    if (activeCategory === categoryId) {
-      setActiveCategory(null)
+      // 从数据库中删除
+      try {
+        await categoriesTable.delete(categoryId)
+        console.log("分类已从数据库删除")
+      } catch (error) {
+        console.error("从数据库删除分类失败:", error)
+        alert("从数据库删除失败，但已从本地移除")
+      }
+
+      // If this was the active category, reset filter
+      if (activeCategory === categoryId) {
+        setActiveCategory(null)
+      }
+    } catch (error) {
+      console.error("删除分类失败:", error)
+      alert("删除分类失败，请重试")
     }
   }
 

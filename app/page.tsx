@@ -165,6 +165,9 @@ const categoryColors = [
   "bg-sky-300",
 ]
 
+// 新增导入Supabase客户端
+import { supabase } from "@/lib/supabase"
+
 export default function FoodOrderingPage() {
   const [dishes, setDishes] = useState<Dish[]>(initialDishes)
   const [categories, setCategories] = useState<Category[]>(initialCategories)
@@ -228,20 +231,8 @@ export default function FoodOrderingPage() {
       }
     }
 
-    // Load order history
-    const savedHistory = localStorage.getItem("orderHistory")
-    if (savedHistory) {
-      try {
-        // Parse the JSON string and convert date strings back to Date objects
-        const parsedHistory = JSON.parse(savedHistory).map((order: any) => ({
-          ...order,
-          orderDate: new Date(order.orderDate),
-        }))
-        setOrderHistory(parsedHistory)
-      } catch (error) {
-        console.error("Error loading order history:", error)
-      }
-    }
+    // 从Supabase加载订单历史
+    fetchOrderHistory()
   }, [])
 
   // Save data to localStorage whenever it changes
@@ -324,12 +315,54 @@ export default function FoodOrderingPage() {
     setCustomerInfo((prev) => ({ ...prev, [name]: value }))
   }
 
+  // 新增函数：从Supabase获取订单历史
+  const fetchOrderHistory = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false })
+      
+      if (error) throw error
+      
+      if (data) {
+        // 转换Supabase订单数据为前端OrderHistory格式
+        const formattedOrders: OrderHistory[] = data.map(order => ({
+          id: order.id,
+          items: order.items.map((item: any) => ({
+            dish: {
+              id: item.dishId || 0,
+              name: item.dishName,
+              description: '',
+              price: item.price,
+              image: '/placeholder.svg',
+              categoryIds: []
+            },
+            quantity: item.quantity
+          })),
+          customerInfo: {
+            name: order.customer_name,
+            note: order.notes || ''
+          },
+          totalPrice: order.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0),
+          orderDate: new Date(order.created_at),
+          images: order.images || []
+        }))
+        
+        setOrderHistory(formattedOrders)
+      }
+    } catch (error) {
+      console.error("获取订单历史失败:", error)
+    }
+  }
+
   // Confirm order
   const confirmOrder = async () => {
     setIsSubmitting(true)
     try {
       // 准备订单数据
       const orderItems = cart.map(item => ({
+        dishId: item.dish.id,
         dishName: item.dish.name,
         quantity: item.quantity,
         price: item.dish.price,
@@ -366,8 +399,8 @@ export default function FoodOrderingPage() {
         images: [],
       }
 
-      // 添加到订单历史
-      setOrderHistory((prev) => [newOrder, ...prev])
+      // 添加到订单历史并刷新数据
+      await fetchOrderHistory()
 
       // 显示完成信息
       setOrderComplete(true)
@@ -420,19 +453,70 @@ export default function FoodOrderingPage() {
     reader.readAsDataURL(file)
   }
 
-  // Add meal image to order history
-  const addMealImageToOrder = () => {
-    if (!selectedOrderId || !mealImagePreview) return
+  // 修改添加图片到订单的功能
+  const addMealImageToOrder = async () => {
+    if (!selectedOrderId || !mealImagePreview || !mealImage) return
 
-    setOrderHistory((prev) =>
-      prev.map((order) =>
-        order.id === selectedOrderId ? { ...order, images: [...order.images, mealImagePreview] } : order,
-      ),
-    )
+    try {
+      // 将图片上传到Supabase存储
+      const fileName = `${Date.now()}.jpg`;
+      const filePath = `${selectedOrderId}/${fileName}`;
+      
+      // 将base64格式的图片转换为Blob
+      const base64Data = mealImagePreview.split(',')[1];
+      const blob = await fetch(`data:image/jpeg;base64,${base64Data}`).then(res => res.blob());
+      
+      // 上传图片到Supabase存储
+      const { data, error } = await supabase.storage
+        .from('meal-images')
+        .upload(filePath, blob, {
+          contentType: 'image/jpeg',
+          upsert: false
+        });
+      
+      if (error) {
+        throw error;
+      }
+      
+      // 获取图片的公共URL
+      const { data: publicUrl } = supabase.storage
+        .from('meal-images')
+        .getPublicUrl(filePath);
+      
+      // 更新订单表中的图片记录
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({
+          images: [...(orderHistory.find(o => o.id === selectedOrderId)?.images || []), publicUrl.publicUrl]
+        })
+        .eq('id', selectedOrderId);
+      
+      if (updateError) {
+        throw updateError;
+      }
+      
+      // 在本地更新图片预览
+      setOrderHistory((prev) =>
+        prev.map((order) =>
+          order.id === selectedOrderId ? { 
+            ...order, 
+            images: [...order.images, publicUrl.publicUrl] 
+          } : order
+        )
+      );
 
-    // Reset image state
-    setMealImage(null)
-    setMealImagePreview("")
+      // 重新获取所有订单数据以确保同步
+      await fetchOrderHistory();
+
+      // Reset image state
+      setMealImage(null);
+      setMealImagePreview("");
+      
+      alert("照片上传成功！");
+    } catch (error) {
+      console.error("上传图片失败:", error);
+      alert("上传图片失败，请重试");
+    }
   }
 
   // Handle new dish form change
@@ -575,7 +659,14 @@ export default function FoodOrderingPage() {
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <h1 className="text-2xl font-bold text-emerald-700">Order History</h1>
+            <h1 className="text-2xl font-bold text-emerald-700">历史订单</h1>
+            <Button
+              variant="ghost"
+              onClick={() => fetchOrderHistory()}
+              className="ml-auto text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+            >
+              刷新
+            </Button>
           </div>
         </header>
 
@@ -585,10 +676,10 @@ export default function FoodOrderingPage() {
               <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <History className="h-10 w-10 text-emerald-500" />
               </div>
-              <h2 className="text-xl font-semibold mb-2 text-emerald-700">No Order History</h2>
-              <p className="text-emerald-600 mb-6">You haven't placed any orders yet.</p>
+              <h2 className="text-xl font-semibold mb-2 text-emerald-700">暂无订单记录</h2>
+              <p className="text-emerald-600 mb-6">您还没有下过任何订单</p>
               <Button onClick={() => setShowOrderHistory(false)} className="bg-emerald-500 hover:bg-emerald-600 text-white">
-                Start Ordering
+                开始点餐
               </Button>
             </div>
           ) : (
@@ -598,23 +689,24 @@ export default function FoodOrderingPage() {
                   <CardContent className="p-6">
                     <div className="flex flex-col md:flex-row justify-between mb-4">
                       <div>
-                        <h3 className="text-lg font-semibold text-emerald-700">Order by {order.customerInfo.name}</h3>
-                        <p className="text-sm text-emerald-600">{formatDate(order.orderDate)}</p>
+                        <h3 className="text-lg font-semibold text-emerald-700">订单号: {order.id.substring(0, 8)}</h3>
+                        <p className="text-sm text-emerald-600">顾客: {order.customerInfo.name}</p>
+                        <p className="text-sm text-emerald-600">时间: {formatDate(order.orderDate)}</p>
                       </div>
                       <div className="mt-2 md:mt-0">
-                        <p className="font-bold text-lg text-orange-500">${order.totalPrice.toFixed(2)}</p>
+                        <p className="font-bold text-lg text-orange-500">¥{order.totalPrice.toFixed(2)}</p>
                       </div>
                     </div>
 
                     {order.customerInfo.note && (
                       <div className="mb-4 p-3 bg-emerald-50 rounded-lg border border-emerald-100">
-                        <p className="text-sm italic text-emerald-700">"{order.customerInfo.note}"</p>
+                        <p className="text-sm italic text-emerald-700">备注: "{order.customerInfo.note}"</p>
                       </div>
                     )}
 
                     <div className="border border-emerald-200 rounded-lg overflow-hidden mb-4">
                       <div className="bg-emerald-100 p-3 border-b border-emerald-200">
-                        <h4 className="font-medium text-emerald-700">Order Items</h4>
+                        <h4 className="font-medium text-emerald-700">订单项目</h4>
                       </div>
                       <div className="divide-y divide-emerald-100">
                         {order.items.map((item, index) => (
@@ -630,7 +722,7 @@ export default function FoodOrderingPage() {
                             <div className="flex-1">
                               <p className="font-medium text-emerald-700">{item.dish.name}</p>
                               <p className="text-sm text-emerald-600">
-                                ${item.dish.price.toFixed(2)} × {item.quantity}
+                                ¥{item.dish.price.toFixed(2)} × {item.quantity}
                               </p>
                               <div className="flex flex-wrap gap-1 mt-1">
                                 {item.dish.categoryIds.map((catId) => {
@@ -648,7 +740,7 @@ export default function FoodOrderingPage() {
                               </div>
                             </div>
                             <p className="font-medium text-orange-500">
-                              ${(item.dish.price * item.quantity).toFixed(2)}
+                              ¥{(item.dish.price * item.quantity).toFixed(2)}
                             </p>
                           </div>
                         ))}
@@ -656,7 +748,7 @@ export default function FoodOrderingPage() {
                     </div>
 
                     <div className="mb-4">
-                      <h4 className="font-medium mb-2 text-emerald-700">Meal Photos</h4>
+                      <h4 className="font-medium mb-2 text-emerald-700">餐品照片</h4>
                       {order.images.length > 0 ? (
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                           {order.images.map((image, index) => (
@@ -674,7 +766,7 @@ export default function FoodOrderingPage() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-emerald-500">No photos added yet</p>
+                        <p className="text-sm text-emerald-500">暂无照片</p>
                       )}
                     </div>
 
@@ -684,7 +776,7 @@ export default function FoodOrderingPage() {
                           <div className="relative aspect-video rounded-lg overflow-hidden border-2 border-emerald-200 mb-2">
                             <Image
                               src={mealImagePreview || "/placeholder.svg"}
-                              alt="Preview"
+                              alt="预览"
                               fill
                               className="object-cover"
                             />
@@ -695,7 +787,7 @@ export default function FoodOrderingPage() {
                               onClick={addMealImageToOrder}
                               className="bg-emerald-500 hover:bg-emerald-600 text-white"
                             >
-                              Save Photo
+                              保存照片
                             </Button>
                             <Button
                               size="sm"
@@ -706,7 +798,7 @@ export default function FoodOrderingPage() {
                               }}
                               className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
                             >
-                              Cancel
+                              取消
                             </Button>
                           </div>
                         </div>
@@ -729,7 +821,7 @@ export default function FoodOrderingPage() {
                             >
                               <span>
                                 <Camera className="h-4 w-4 mr-2" />
-                                Add Photo
+                                添加照片
                               </span>
                             </Button>
                           </label>
@@ -892,328 +984,42 @@ export default function FoodOrderingPage() {
 
   return (
     <div className="relative min-h-screen bg-gray-50">
-      <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-2 flex justify-between items-center shadow-sm">
+      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-2 flex justify-between items-center shadow-sm">
         <h1 className="text-xl font-bold text-emerald-600">美食点餐系统</h1>
-        <Link href="/admin" className="text-sm text-emerald-600 hover:text-emerald-800">
-          管理后台
-        </Link>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+            onClick={() => setShowOrderHistory(true)}
+          >
+            <History className="h-4 w-4 mr-2" />
+            历史订单
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+            asChild
+          >
+            <Link href="/admin">
+              管理后台
+            </Link>
+          </Button>
+        </div>
       </div>
       
-      <div className="flex flex-col min-h-screen bg-emerald-50">
-        {/* Header */}
-        <header className="sticky top-0 z-10 bg-white border-b border-emerald-100 shadow-sm">
-          <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-emerald-700">
-              <span className="text-orange-400">Tasty</span> Bites
-            </h1>
-
-            <div className="flex items-center gap-2">
-              {/* History button */}
-              <Button
-                variant="outline"
-                size="sm"
-                className="mr-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                onClick={() => setShowOrderHistory(true)}
-              >
-                <History className="h-4 w-4 mr-2" />
-                History
-              </Button>
-
-              {/* Category management button */}
-              <Button
-                variant="outline"
-                size="sm"
-                className="mr-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                onClick={() => setShowCategoryModal(true)}
-              >
-                <Tag className="h-4 w-4 mr-2" />
-                Categories
-              </Button>
-
-              {/* Add Dish button */}
-              <Button
-                variant="outline"
-                size="sm"
-                className="mr-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                onClick={() => setShowAddDishModal(true)}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Dish
-              </Button>
-
-              {/* Mobile cart button */}
-              <div className="lg:hidden">
-                <Sheet>
-                  <SheetTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="relative border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                    >
-                      <ShoppingCart className="h-5 w-5" />
-                      {cart.length > 0 && (
-                        <span className="absolute -top-2 -right-2 bg-orange-400 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                          {cart.reduce((sum, item) => sum + item.quantity, 0)}
-                        </span>
-                      )}
-                    </Button>
-                  </SheetTrigger>
-                  <SheetContent side="right" className="w-full sm:w-80 border-l border-emerald-100 bg-white">
-                    <Cart
-                      cart={cart}
-                      updateQuantity={updateQuantity}
-                      removeFromCart={removeFromCart}
-                      totalPrice={totalPrice}
-                      submitOrder={submitOrder}
-                      getCategoryById={getCategoryById}
-                    />
-                  </SheetContent>
-                </Sheet>
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Category Management Modal */}
-        {showCategoryModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-lg w-full max-w-md overflow-hidden border border-emerald-100">
-              <div className="p-4 border-b border-emerald-100">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-xl font-semibold text-emerald-700">Manage Categories</h2>
-                  <button onClick={() => setShowCategoryModal(false)} className="text-emerald-500 hover:text-emerald-700">
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-4">
-                <Tabs defaultValue="add" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2 bg-emerald-100 rounded-lg p-1">
-                    <TabsTrigger
-                      value="add"
-                      className="rounded-md data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm"
-                    >
-                      Add Category
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="manage"
-                      className="rounded-md data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm"
-                    >
-                      Manage Categories
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="add" className="mt-4">
-                    <div className="grid gap-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor="category-name" className="text-emerald-700">
-                          Category Name
-                        </Label>
-                        <Input
-                          id="category-name"
-                          name="name"
-                          value={newCategory.name}
-                          onChange={handleNewCategoryChange}
-                          placeholder="Enter category name"
-                          className="border-emerald-200 focus:border-emerald-300 focus:ring-emerald-300 rounded-lg"
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="category-color" className="text-emerald-700">
-                          Category Color
-                        </Label>
-                        <div className="grid grid-cols-4 gap-2">
-                          {categoryColors.map((color) => (
-                            <div
-                              key={color}
-                              className={`h-10 rounded-lg cursor-pointer ${color} ${
-                                newCategory.color === color ? "ring-2 ring-offset-2 ring-emerald-500" : ""
-                              }`}
-                              onClick={() => setNewCategory((prev) => ({ ...prev, color }))}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                      <Button
-                        onClick={addNewCategory}
-                        className="mt-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
-                      >
-                        Add Category
-                      </Button>
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="manage" className="mt-4">
-                    {categories.length === 0 ? (
-                      <p className="text-center py-4 text-emerald-500">No categories yet</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {categories.map((category) => (
-                          <div
-                            key={category.id}
-                            className="flex items-center justify-between p-3 border border-emerald-200 rounded-lg"
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className={`w-5 h-5 rounded-full ${category.color}`} />
-                              <span className="text-emerald-700">{category.name}</span>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => deleteCategory(category.id)}
-                              className="text-red-400 hover:text-red-500 hover:bg-red-50 rounded-full"
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </TabsContent>
-                </Tabs>
-
-                <div className="mt-6 flex justify-end">
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowCategoryModal(false)}
-                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                  >
-                    Close
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Add Dish Modal */}
-        {showAddDishModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-lg w-full max-w-md overflow-hidden border border-emerald-100">
-              <div className="p-4 border-b border-emerald-100">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-xl font-semibold text-emerald-700">Add New Dish</h2>
-                  <button onClick={() => setShowAddDishModal(false)} className="text-emerald-500 hover:text-emerald-700">
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-4">
-                <div className="grid gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="dish-name" className="text-emerald-700">
-                      Dish Name
-                    </Label>
-                    <Input
-                      id="dish-name"
-                      name="name"
-                      value={newDish.name}
-                      onChange={handleNewDishChange}
-                      placeholder="Enter dish name"
-                      className="border-emerald-200 focus:border-emerald-300 focus:ring-emerald-300 rounded-lg"
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="dish-description" className="text-emerald-700">
-                      Description
-                    </Label>
-                    <Textarea
-                      id="dish-description"
-                      name="description"
-                      value={newDish.description}
-                      onChange={handleNewDishChange}
-                      placeholder="Enter dish description"
-                      className="border-emerald-200 focus:border-emerald-300 focus:ring-emerald-300 rounded-lg"
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="dish-price" className="text-emerald-700">
-                      Price ($)
-                    </Label>
-                    <Input
-                      id="dish-price"
-                      name="price"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={newDish.price || ""}
-                      onChange={handleNewDishChange}
-                      placeholder="0.00"
-                      className="border-emerald-200 focus:border-emerald-300 focus:ring-emerald-300 rounded-lg"
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label className="text-emerald-700">Categories</Label>
-                    <div className="border border-emerald-200 rounded-lg p-3 max-h-40 overflow-y-auto">
-                      {categories.length === 0 ? (
-                        <p className="text-sm text-emerald-500">No categories available</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {categories.map((category) => (
-                            <div key={category.id} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`category-${category.id}`}
-                                checked={newDish.categoryIds.includes(category.id)}
-                                onCheckedChange={() => toggleDishCategory(category.id)}
-                                className="border-emerald-300 text-emerald-500 focus:ring-emerald-300 rounded"
-                              />
-                              <Label
-                                htmlFor={`category-${category.id}`}
-                                className="flex items-center cursor-pointer text-emerald-700"
-                              >
-                                <div className={`w-3 h-3 rounded-full ${category.color} mr-2`} />
-                                {category.name}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="dish-image" className="text-emerald-700">
-                      Image (Optional)
-                    </Label>
-                    <Input
-                      id="dish-image"
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageChange}
-                      className="border-emerald-200 focus:border-emerald-300 focus:ring-emerald-300 rounded-lg"
-                    />
-                    {imagePreview && (
-                      <div className="mt-2 relative h-40 w-full">
-                        <Image
-                          src={imagePreview || "/placeholder.svg"}
-                          alt="Preview"
-                          fill
-                          className="object-cover rounded-lg border-2 border-emerald-200"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-6 flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowAddDishModal(false)}
-                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                  >
-                    Cancel
-                  </Button>
-                  <Button onClick={addNewDish} className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-full">
-                    Add Dish
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="flex flex-col min-h-screen bg-emerald-50 pt-14">
+        {/* 店铺信息 */}
+        <div className="container mx-auto px-4 py-4">
+          <h1 className="text-2xl font-bold text-emerald-700">
+            <span className="text-orange-400">Tasty</span> Bites
+          </h1>
+        </div>
 
         <div className="flex flex-1">
           {/* Main content */}
-          <main className="flex-1 container mx-auto px-4 py-8">
+          <main className="flex-1 container mx-auto px-4 py-4">
             {/* Search and filter */}
             <div className="mb-6 flex flex-col sm:flex-row gap-4">
               <div className="relative flex-1">

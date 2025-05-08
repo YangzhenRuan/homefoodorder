@@ -568,17 +568,43 @@ export default function FoodOrderingPage() {
       // 同步到数据库
       if (newDish.categoryIds.length > 0) {
         try {
-          await dishesTable.create({
+          console.log("正在保存菜品到数据库:", {
             name: newDish.name,
             description: newDish.description,
             price: newDish.price,
             image: dishImage,
             category_ids: newDish.categoryIds
           })
-          console.log("菜品已保存到数据库")
-        } catch (error) {
+          
+          const result = await dishesTable.create({
+            name: newDish.name,
+            description: newDish.description,
+            price: newDish.price,
+            image: dishImage,
+            category_ids: newDish.categoryIds
+          })
+          
+          console.log("菜品已保存到数据库，返回结果:", result)
+        } catch (error: any) {
           console.error("保存菜品到数据库失败:", error)
-          alert("同步到数据库失败，但已保存到本地")
+          
+          // 尝试获取更详细的错误信息
+          let errorDetail = ''
+          if (error.code) errorDetail += ` 错误代码: ${error.code}.`
+          if (error.message) errorDetail += ` 消息: ${error.message}.`
+          if (error.details) errorDetail += ` 详情: ${error.details}.`
+          if (error.hint) errorDetail += ` 提示: ${error.hint}.`
+          
+          alert(`同步到数据库失败: ${errorDetail || '未知错误'}, 但已保存到本地`)
+          
+          // 测试数据库连接
+          try {
+            const response = await fetch('/api/test-supabase')
+            const testResult = await response.json()
+            console.log("数据库连接测试结果:", testResult)
+          } catch (testError) {
+            console.error("测试数据库连接时出错:", testError)
+          }
         }
       } else {
         alert("请至少选择一个分类")
@@ -596,9 +622,9 @@ export default function FoodOrderingPage() {
       setImageFile(null)
       setImagePreview("")
       setShowAddDishModal(false)
-    } catch (error) {
+    } catch (error: any) {
       console.error("添加菜品失败:", error)
-      alert("添加菜品失败，请重试")
+      alert(`添加菜品失败: ${error.message || '未知错误'}`)
     }
   }
 
@@ -637,15 +663,33 @@ export default function FoodOrderingPage() {
 
       // 同步到数据库
       try {
-        await categoriesTable.create({
+        console.log("正在保存分类到数据库:", categoryToAdd)
+        const result = await categoriesTable.create({
           id: categoryId,
           name: newCategory.name,
           color: newCategory.color
         })
-        console.log("分类已保存到数据库")
-      } catch (error) {
+        console.log("分类已保存到数据库，返回结果:", result)
+      } catch (error: any) {
         console.error("保存分类到数据库失败:", error)
-        alert("同步到数据库失败，但已保存到本地")
+        
+        // 尝试获取更详细的错误信息
+        let errorDetail = ''
+        if (error.code) errorDetail += ` 错误代码: ${error.code}.`
+        if (error.message) errorDetail += ` 消息: ${error.message}.`
+        if (error.details) errorDetail += ` 详情: ${error.details}.`
+        if (error.hint) errorDetail += ` 提示: ${error.hint}.`
+        
+        alert(`同步到数据库失败: ${errorDetail || '未知错误'}, 但已保存到本地`)
+        
+        // 测试数据库连接
+        try {
+          const response = await fetch('/api/test-supabase')
+          const testResult = await response.json()
+          console.log("数据库连接测试结果:", testResult)
+        } catch (testError) {
+          console.error("测试数据库连接时出错:", testError)
+        }
       }
 
       // Reset form
@@ -653,9 +697,9 @@ export default function FoodOrderingPage() {
         name: "",
         color: categoryColors[0],
       })
-    } catch (error) {
+    } catch (error: any) {
       console.error("添加分类失败:", error)
-      alert("添加分类失败，请重试")
+      alert(`添加分类失败: ${error.message || '未知错误'}`)
     }
   }
 

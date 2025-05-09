@@ -1683,6 +1683,16 @@ export default function FoodOrderingPage() {
                 管理后台
               </Link>
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-blue-300 text-blue-700 hover:bg-blue-50 rounded-full"
+              asChild
+            >
+              <Link href="/storage-admin">
+                存储管理
+              </Link>
+            </Button>
           </div>
         </div>
       </div>

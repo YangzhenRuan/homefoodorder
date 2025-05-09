@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { ArrowLeft, RefreshCw } from "lucide-react"
+import { ArrowLeft, RefreshCw, Settings, Database, ShoppingBasket, Image } from "lucide-react"
 import Link from "next/link"
 import { format } from "date-fns"
 import { zhCN } from "date-fns/locale"
@@ -89,6 +89,22 @@ export default function AdminPage() {
           <RefreshCw className="h-4 w-4" />
           刷新
         </Button>
+      </div>
+
+      {/* 添加管理菜单 */}
+      <div className="mb-6 flex flex-wrap gap-2">
+        <Link href="/admin">
+          <Button variant="outline" className="flex items-center gap-2">
+            <ShoppingBasket className="h-4 w-4" />
+            订单管理
+          </Button>
+        </Link>
+        <Link href="/storage-admin">
+          <Button variant="outline" className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            存储管理
+          </Button>
+        </Link>
       </div>
 
       <Card>

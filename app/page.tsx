@@ -90,50 +90,8 @@ const categoryColors = [
 
 // 新增导入Supabase客户端和表操作函数
 import { supabase, categoriesTable, dishesTable, ordersTable, checkSupabaseConnection } from "@/lib/supabase"
-
-// 添加图片处理函数，压缩图片尺寸
-const processImage = (file: File, maxWidth = 800): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = document.createElement('img');
-      img.onload = () => {
-        // 限制图片最大尺寸
-        let width = img.width;
-        let height = img.height;
-        
-        if (width > maxWidth) {
-          height = Math.floor(height * (maxWidth / width));
-          width = maxWidth;
-        }
-        
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('无法创建canvas上下文'));
-          return;
-        }
-        
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        // 使用较低质量导出以减小文件大小
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-        resolve(dataUrl);
-      };
-      img.onerror = () => {
-        reject(new Error('图片加载失败'));
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.onerror = () => {
-      reject(new Error('文件读取失败'));
-    };
-    reader.readAsDataURL(file);
-  });
-};
+// 添加图片上传相关函数的导入
+import { processImage, uploadImageToStorage, uploadWithRetry, checkStorageAvailability as checkStorage } from "../lib/imageUpload"
 
 export default function FoodOrderingPage() {
   const [dishes, setDishes] = useState<Dish[]>([])
@@ -197,258 +155,114 @@ export default function FoodOrderingPage() {
   const [convertSuccess, setConvertSuccess] = useState(false);
   const [isAutoConverting, setIsAutoConverting] = useState(false);
   
-  // 上传图片到Supabase存储并返回URL
-  const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishes'): Promise<string> => {
-    if (!imageDataUrl || !imageDataUrl.startsWith('data:image')) {
-      console.error('无效的图片数据');
-      return '/placeholder.svg';
-    }
-    
+  // 添加存储验证状态
+  const [storageStatus, setStorageStatus] = useState<{
+    checked: boolean;
+    ready: boolean;
+    message?: string;
+  }>({
+    checked: false,
+    ready: false
+  });
+
+  // 验证Supabase存储是否可用 (Moved inside the component)
+  const checkStorageAvailability = async () => {
     try {
-      // 检查存储桶是否存在
+      // 检查storage API是否可用
       const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
-      const bucketExists = buckets?.some(bucket => bucket.name === 'food-images');
       
       if (bucketError) {
-        console.error('获取存储桶列表错误:', bucketError);
-        throw bucketError;
+        console.error('Supabase存储验证失败:', bucketError);
+        setStorageStatus({
+          checked: true,
+          ready: false,
+          message: `存储服务不可用: ${bucketError.message}`
+        });
+        return false;
       }
       
-      // 如果存储桶不存在，则创建
+      // 检查food-images存储桶是否存在
+      const bucketExists = buckets?.some(bucket => bucket.name === 'food-images');
+      
       if (!bucketExists) {
-        const { error: createBucketError } = await supabase.storage.createBucket('food-images', {
-          public: true, // 设置为公开访问
-          fileSizeLimit: 5242880, // 5MB限制
-        });
-        
-        if (createBucketError) {
-          console.error('创建存储桶错误:', createBucketError);
-          throw createBucketError;
-        }
-        
-        console.log('成功创建food-images存储桶');
-      }
-      
-      // 生成文件名 - 添加随机字符串避免并发冲突
-      const randomStr = Math.random().toString(36).substring(2, 8);
-      const fileName = `${Date.now()}_${randomStr}.jpg`;
-      const filePath = `${prefix}/${fileName}`;
-      
-      // 将base64格式的图片转换为Blob
-      const base64Data = imageDataUrl.split(',')[1];
-      if (!base64Data) {
-        console.error('无法解析base64数据');
-        return '/placeholder.svg';
-      }
-      
-      const blob = await fetch(`data:image/jpeg;base64,${base64Data}`).then(res => res.blob());
-      
-      // 上传图片到Supabase存储
-      const { data, error } = await supabase.storage
-        .from('food-images')
-        .upload(filePath, blob, {
-          contentType: 'image/jpeg',
-          upsert: true // 修改为true，允许覆盖
-        });
-      
-      if (error) {
-        console.error('上传图片错误:', error);
-        console.error('错误详情:', {
-          message: error.message,
-          name: error.name
-        });
-        return '/placeholder.svg';
-      }
-      
-      // 获取图片的公共URL
-      const { data: publicUrl } = supabase.storage
-        .from('food-images')
-        .getPublicUrl(filePath);
-      
-      console.log('图片上传成功:', publicUrl.publicUrl);
-      return publicUrl.publicUrl;
-    } catch (error: any) {
-      console.error('处理图片错误:', error);
-      console.error('错误详情:', error.message || '未知错误');
-      return '/placeholder.svg';
-    }
-  };
-  
-  // 用于将现有的base64图片转换为URL引用的工具函数
-  const convertExistingBase64ToUrl = async (dish: Dish): Promise<Dish> => {
-    // 如果不是base64图片，直接返回
-    if (!dish.image || !dish.image.startsWith('data:image')) {
-      return dish;
-    }
-    
-    const originalImage = dish.image;
-    
-    try {
-      // 上传base64图片并获取URL
-      const imageUrl = await uploadWithRetry(dish.image);
-      
-      // 如果上传成功，更新数据库记录
-      if (imageUrl && imageUrl !== '/placeholder.svg') {
-        // 查找该菜品的所有记录
-        const { data, error } = await supabase
-          .from('dishes')
-          .select('*')
-          .eq('id', dish.id);
-        
-        if (error) {
-          console.error('查询菜品错误:', error);
-          return dish;
-        }
-        
-        // 更新每条记录的图片URL
-        if (data && data.length > 0) {
-          for (const record of data) {
-            await supabase
-              .from('dishes')
-              .update({ image: imageUrl })
-              .eq('id', record.id);
+        // 尝试创建存储桶
+        try {
+          const { error: createError } = await supabase.storage.createBucket('food-images', {
+            public: true,
+            fileSizeLimit: 5242880 // 5MB
+          });
+          
+          if (createError) {
+            console.error('创建存储桶失败:', createError);
+            setStorageStatus({
+              checked: true,
+              ready: false,
+              message: `无法创建存储桶: ${createError.message}`
+            });
+            return false;
           }
           
-          // 返回更新后的菜品
-          return {
-            ...dish,
-            image: imageUrl
-          };
-        }
-      }
-      
-      return dish;
-    } catch (error) {
-      console.error('转换base64图片失败:', error);
-      return dish;
-    }
-  };
-  
-  // 添加重试机制的上传函数
-  const uploadWithRetry = async (imageDataUrl: string, prefix = 'dishes', retries = 2): Promise<string> => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        return await uploadImageToStorage(imageDataUrl, prefix);
-      } catch (error) {
-        if (attempt === retries) {
-          console.error(`上传失败，已重试${retries}次:`, error);
-          throw error;
-        }
-        // 等待时间随着重试次数增加
-        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-        console.log(`重试上传，第${attempt + 1}次...`);
-      }
-    }
-    return '/placeholder.svg';
-  };
-
-  // 自动转换base64图片为URL引用
-  const autoConvertBase64Images = async (base64Dishes: Dish[]) => {
-    if (!base64Dishes.length || isAutoConverting) return;
-    
-    setIsAutoConverting(true);
-    setConvertProgress({ current: 0, total: base64Dishes.length });
-    setShowConvertTip(true);
-    
-    try {
-      // 分批处理，每批3个
-      const batchSize = 3;
-      let converted = 0;
-      
-      for (let i = 0; i < base64Dishes.length; i += batchSize) {
-        const batch = base64Dishes.slice(i, i + batchSize);
-        
-        // 并行处理每批
-        const results = await Promise.all(
-          batch.map(dish => convertExistingBase64ToUrl(dish))
-        );
-        
-        // 更新转换进度
-        const batchConverted = results.filter(result => result.image !== batch.find(d => d.id === result.id)?.image).length;
-        converted += batchConverted;
-        setConvertProgress({ 
-          current: Math.min(i + batchSize, base64Dishes.length), 
-          total: base64Dishes.length 
-        });
-        
-        // 更新本地状态
-        if (batchConverted > 0) {
-          setDishes(prev => {
-            // 创建一个新的dishes数组，替换已更新的dish
-            return prev.map(d => {
-              const updated = results.find(r => r.id === d.id);
-              return updated || d;
-            });
+          console.log('成功创建food-images存储桶');
+        } catch (error: any) {
+          console.error('创建存储桶时发生错误:', error);
+          setStorageStatus({
+            checked: true,
+            ready: false,
+            message: `创建存储桶时出错: ${error.message || '未知错误'}`
           });
+          return false;
+        }
+      }
+      
+      // 测试上传小型测试文件
+      try {
+        const testBlob = new Blob(['test'], { type: 'text/plain' });
+        const testPath = `test/storage-test-${Date.now()}.txt`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('food-images')
+          .upload(testPath, testBlob, { upsert: true });
+        
+        if (uploadError) {
+          console.error('测试上传失败:', uploadError);
+          setStorageStatus({
+            checked: true,
+            ready: false,
+            message: `测试上传失败: ${uploadError.message}`
+          });
+          return false;
         }
         
-        // 添加小延迟，避免API限制
-        await new Promise(resolve => setTimeout(resolve, 300));
+        // 测试成功后删除测试文件
+        await supabase.storage
+          .from('food-images')
+          .remove([testPath]);
+        
+        setStorageStatus({
+          checked: true,
+          ready: true
+        });
+        return true;
+      } catch (error: any) {
+        console.error('测试上传时发生错误:', error);
+        setStorageStatus({
+          checked: true,
+          ready: false,
+          message: `测试上传时出错: ${error.message || '未知错误'}`
+        });
+        return false;
       }
-      
-      // 转换完成后提示
-      setShowConvertTip(false);
-      
-      // 如果有转换成功的，显示成功信息
-      if (converted > 0) {
-        console.log(`自动转换完成! 成功转换 ${converted}/${base64Dishes.length} 个图片为URL引用。`);
-        setConvertSuccess(true);
-        setTimeout(() => setConvertSuccess(false), 3000);
-      }
-    } catch (error) {
-      console.error('自动转换图片错误:', error);
-      setShowConvertTip(false);
-    } finally {
-      setIsAutoConverting(false);
+    } catch (error: any) {
+      console.error('验证存储时发生错误:', error);
+      setStorageStatus({
+        checked: true,
+        ready: false,
+        message: `验证存储时出错: ${error.message || '未知错误'}`
+      });
+      return false;
     }
   };
   
-  // 批量转换菜品base64图片为URL引用 (手动触发版)
-  const convertAllBase64Images = async () => {
-    if (!dishes.length) return;
-    
-    setIsSubmitting(true);
-    setShowConvertModal(true);
-    setConvertProgress({ current: 0, total: 0 });
-    
-    try {
-      // 找出所有使用base64图片的菜品
-      const base64Dishes = dishes.filter(dish => dish.image?.startsWith('data:image'));
-      
-      if (base64Dishes.length === 0) {
-        alert('没有发现需要转换的base64图片');
-        setShowConvertModal(false);
-        return;
-      }
-      
-      const total = base64Dishes.length;
-      setConvertProgress({ current: 0, total });
-      
-      let converted = 0;
-      
-      // 逐个转换
-      for (const [index, dish] of base64Dishes.entries()) {
-        setConvertProgress({ current: index + 1, total });
-        
-        const updatedDish = await convertExistingBase64ToUrl(dish);
-        
-        // 更新本地状态
-        if (updatedDish.image !== dish.image) {
-          setDishes(prev => prev.map(d => d.id === dish.id ? updatedDish : d));
-          converted++;
-        }
-      }
-      
-      alert(`转换完成! 成功转换 ${converted}/${total} 个图片为URL引用。`);
-    } catch (error) {
-      console.error('批量转换图片错误:', error);
-      alert('转换图片过程中出错，请查看控制台获取详情');
-    } finally {
-      setIsSubmitting(false);
-      setShowConvertModal(false);
-    }
-  };
-
   // 使用useEffect加载数据
   useEffect(() => {
     loadData();
@@ -548,6 +362,14 @@ export default function FoodOrderingPage() {
       }
     } finally {
       setIsLoading(false);
+    }
+    
+    // 在加载数据完成后验证存储服务
+    try {
+      // 现在调用的是组件内部的 checkStorageAvailability
+      await checkStorageAvailability();
+    } catch (error) {
+      console.error('存储验证失败:', error);
     }
   };
 
@@ -744,11 +566,30 @@ export default function FoodOrderingPage() {
     const file = e.target.files?.[0]
     if (!file) return
 
+    // 检查存储状态
+    if (!storageStatus.checked) {
+      try {
+        // 调用组件内部的 checkStorageAvailability
+        const isStorageReady = await checkStorageAvailability();
+        if (!isStorageReady) {
+          alert('无法上传图片: 存储服务不可用。请联系管理员或稍后再试。');
+          return;
+        }
+      } catch (error) {
+        console.error('验证存储失败:', error);
+        alert('无法验证存储服务，图片上传可能不可用。');
+        // Don't return here, let the user try to upload anyway if they want.
+      }
+    } else if (!storageStatus.ready) {
+      alert(`无法上传图片: ${storageStatus.message || '存储服务不可用'}`);
+      return;
+    }
+
     setImageFile(file)
     setIsSubmitting(true); // 添加加载状态
 
     try {
-      // 处理并压缩图片
+      // 处理并压缩图片 - Uses imported processImage
       const processedImage = await processImage(file);
       setImagePreview(processedImage);
     } catch (error) {
@@ -769,7 +610,7 @@ export default function FoodOrderingPage() {
     setIsSubmitting(true); // 添加加载状态
 
     try {
-      // 处理并压缩图片
+      // 处理并压缩图片 - Uses imported processImage
       const processedImage = await processImage(file);
       setMealImagePreview(processedImage);
     } catch (error) {
@@ -780,6 +621,170 @@ export default function FoodOrderingPage() {
       setIsSubmitting(false); // 结束加载状态
     }
   }
+  
+  // 上传图片到Supabase存储并返回URL (This is now from lib/imageUpload, keeping for context if needed by other functions below)
+  // const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishes'): Promise<string> => { ... }
+  
+  // 用于将现有的base64图片转换为URL引用的工具函数
+  const convertExistingBase64ToUrl = async (dish: Dish): Promise<Dish> => {
+    // 如果不是base64图片，直接返回
+    if (!dish.image || !dish.image.startsWith('data:image')) {
+      return dish;
+    }
+    
+    // const originalImage = dish.image; // Not used
+    
+    try {
+      // 上传base64图片并获取URL - Uses imported uploadWithRetry which uses imported uploadImageToStorage
+      const imageUrl = await uploadWithRetry(dish.image);
+      
+      // 如果上传成功，更新数据库记录
+      if (imageUrl && imageUrl !== '/placeholder.svg') {
+        // 查找该菜品的所有记录
+        const { data, error } = await supabase
+          .from('dishes')
+          .select('*')
+          .eq('id', dish.id);
+        
+        if (error) {
+          console.error('查询菜品错误:', error);
+          return dish; // Return original dish on error
+        }
+        
+        // 更新每条记录的图片URL
+        if (data && data.length > 0) {
+          for (const record of data) {
+            await supabase
+              .from('dishes')
+              .update({ image: imageUrl })
+              .eq('id', record.id); // Use record.id to ensure correct update
+          }
+          
+          // 返回更新后的菜品
+          return {
+            ...dish,
+            image: imageUrl
+          };
+        }
+      }
+      
+      return dish; // Return original dish if upload failed or no records found
+    } catch (error) {
+      console.error('转换base64图片失败:', error);
+      return dish; // Return original dish on error
+    }
+  };
+  
+  // 添加重试机制的上传函数 (This is now from lib/imageUpload, keeping for context if needed by other functions below)
+  // const uploadWithRetry = async (imageDataUrl: string, prefix = 'dishes', retries = 2): Promise<string> => { ... }
+
+  // 自动转换base64图片为URL引用
+  const autoConvertBase64Images = async (base64Dishes: Dish[]) => {
+    if (!base64Dishes.length || isAutoConverting) return;
+    
+    setIsAutoConverting(true);
+    setConvertProgress({ current: 0, total: base64Dishes.length });
+    setShowConvertTip(true);
+    
+    try {
+      // 分批处理，每批3个
+      const batchSize = 3;
+      let convertedCount = 0; // Renamed for clarity
+      
+      for (let i = 0; i < base64Dishes.length; i += batchSize) {
+        const batch = base64Dishes.slice(i, i + batchSize);
+        
+        // 并行处理每批
+        const results = await Promise.all(
+          batch.map(dish => convertExistingBase64ToUrl(dish))
+        );
+        
+        // 更新转换进度
+        const batchConvertedCount = results.filter(result => result.image !== batch.find(d => d.id === result.id)?.image).length;
+        convertedCount += batchConvertedCount;
+        setConvertProgress({ 
+          current: Math.min(i + batchSize, base64Dishes.length), 
+          total: base64Dishes.length 
+        });
+        
+        // 更新本地状态
+        if (batchConvertedCount > 0) {
+          setDishes(prev => {
+            // 创建一个新的dishes数组，替换已更新的dish
+            return prev.map(d => {
+              const updated = results.find(r => r.id === d.id);
+              return updated || d;
+            });
+          });
+        }
+        
+        // 添加小延迟，避免API限制
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      // 转换完成后提示
+      setShowConvertTip(false);
+      
+      // 如果有转换成功的，显示成功信息
+      if (convertedCount > 0) {
+        console.log(`自动转换完成! 成功转换 ${convertedCount}/${base64Dishes.length} 个图片为URL引用。`);
+        setConvertSuccess(true);
+        setTimeout(() => setConvertSuccess(false), 3000);
+      }
+    } catch (error) {
+      console.error('自动转换图片错误:', error);
+      setShowConvertTip(false);
+    } finally {
+      setIsAutoConverting(false);
+    }
+  };
+  
+  // 批量转换菜品base64图片为URL引用 (手动触发版)
+  const convertAllBase64Images = async () => {
+    if (!dishes.length) return;
+    
+    setIsSubmitting(true);
+    setShowConvertModal(true);
+    setConvertProgress({ current: 0, total: 0 });
+    
+    try {
+      // 找出所有使用base64图片的菜品
+      const base64Dishes = dishes.filter(dish => dish.image?.startsWith('data:image'));
+      
+      if (base64Dishes.length === 0) {
+        alert('没有发现需要转换的base64图片');
+        setShowConvertModal(false);
+        setIsSubmitting(false); // Reset submitting state
+        return;
+      }
+      
+      const totalToConvert = base64Dishes.length; // Renamed for clarity
+      setConvertProgress({ current: 0, total: totalToConvert });
+      
+      let convertedCount = 0; // Renamed for clarity
+      
+      // 逐个转换
+      for (const [index, dish] of base64Dishes.entries()) {
+        setConvertProgress({ current: index + 1, total: totalToConvert });
+        
+        const updatedDish = await convertExistingBase64ToUrl(dish);
+        
+        // 更新本地状态
+        if (updatedDish.image !== dish.image) {
+          setDishes(prev => prev.map(d => d.id === dish.id ? updatedDish : d));
+          convertedCount++;
+        }
+      }
+      
+      alert(`转换完成! 成功转换 ${convertedCount}/${totalToConvert} 个图片为URL引用。`);
+    } catch (error) {
+      console.error('批量转换图片错误:', error);
+      alert('转换图片过程中出错，请查看控制台获取详情');
+    } finally {
+      setIsSubmitting(false);
+      setShowConvertModal(false);
+    }
+  };
 
   // 修改添加图片到订单的功能
   const addMealImageToOrder = async () => {
@@ -788,7 +793,7 @@ export default function FoodOrderingPage() {
     try {
       setIsSubmitting(true);
       
-      // 上传图片到存储并获取URL
+      // 上传图片到存储并获取URL - Uses imported uploadImageToStorage
       const imageUrl = await uploadImageToStorage(mealImagePreview, `orders/${selectedOrderId}`);
       
       if (!imageUrl || imageUrl === '/placeholder.svg') {
@@ -812,7 +817,7 @@ export default function FoodOrderingPage() {
         prev.map((order) =>
           order.id === selectedOrderId ? { 
             ...order, 
-            images: [...order.images, imageUrl] 
+            images: [...(order.images || []), imageUrl] // Ensure order.images is an array
           } : order
         )
       );
@@ -868,7 +873,7 @@ export default function FoodOrderingPage() {
     try {
       setIsSubmitting(true);
       
-      // 上传图片并获取URL
+      // 上传图片并获取URL - Uses imported uploadImageToStorage
       let imageUrl = '/placeholder.svg';
       if (imagePreview && imagePreview.startsWith('data:image')) {
         imageUrl = await uploadImageToStorage(imagePreview);
@@ -921,6 +926,10 @@ export default function FoodOrderingPage() {
         setShowAddDishModal(false);
         
         alert("菜品添加成功");
+      } else {
+        // Handle case where result is null or empty, though create should throw on error
+        console.error("添加菜品失败，数据库未返回有效结果。");
+        alert("添加菜品失败，请检查控制台日志。");
       }
     } catch (error: any) {
       console.error("添加菜品失败:", error);
@@ -989,6 +998,10 @@ export default function FoodOrderingPage() {
           })
           
           alert("分类创建成功")
+        } else {
+          // Handle case where result is null or empty
+          console.error("创建分类失败，数据库未返回有效结果。");
+          alert("创建分类失败，请检查控制台日志。");
         }
       } catch (error: any) {
         console.error("保存分类到数据库失败:", error)
@@ -1002,7 +1015,7 @@ export default function FoodOrderingPage() {
         
         alert(`创建分类失败: ${errorDetail || '未知错误'}`)
       }
-    } catch (error: any) {
+    } catch (error: any) { // This catch block might be redundant if the inner one handles all errors
       console.error("添加分类失败:", error)
       alert(`添加分类失败: ${error.message || '未知错误'}`)
     }
@@ -1018,23 +1031,20 @@ export default function FoodOrderingPage() {
       // 从数据库中删除
       await categoriesTable.delete(categoryId);
       
-      // 获取该分类下的所有菜品ID
-      const dishesToRemove = dishes.filter(dish => 
-        dish.categoryIds.includes(categoryId)
-      ).map(dish => dish.id);
+      // 获取该分类下的所有菜品ID (This is not strictly needed if DB handles cascade or we re-fetch)
+      // const dishesToRemove = dishes.filter(dish => 
+      //   dish.categoryIds.includes(categoryId)
+      // ).map(dish => dish.id);
       
       // 从本地状态中移除分类
       setCategories((prev) => prev.filter((cat) => cat.id !== categoryId));
 
-      // 从所有菜品中移除此分类
+      // 从所有菜品中移除此分类，并移除没有分类的菜品
       setDishes((prev) => {
-        // 首先移除类别ID
         const updatedDishes = prev.map((dish) => ({
           ...dish,
           categoryIds: dish.categoryIds.filter((id) => id !== categoryId),
         }));
-        
-        // 然后过滤掉没有任何类别的菜品
         return updatedDishes.filter(dish => dish.categoryIds.length > 0);
       });
 
@@ -1089,7 +1099,7 @@ export default function FoodOrderingPage() {
       description: dish.description,
       price: dish.price,
       image: dish.image,
-      categoryIds: [...dish.categoryIds],
+      categoryIds: [...dish.categoryIds], // Create a new array for categoryIds
     });
     setImagePreview(dish.image); // 设置图片预览
     setShowEditDishModal(true);
@@ -1132,7 +1142,7 @@ export default function FoodOrderingPage() {
     try {
       setIsSubmitting(true);
       
-      // 上传图片并获取URL
+      // 上传图片并获取URL - Uses imported uploadImageToStorage
       let imageUrl = editDishForm.image;
       
       // 如果图片预览是新的base64图片，上传并使用新URL
@@ -1145,7 +1155,7 @@ export default function FoodOrderingPage() {
         imageUrl = '/placeholder.svg';
       }
 
-      // 先删除原有菜品
+      // 先删除原有菜品 (This is a simplification; might be better to update in place or handle ID changes)
       await dishesTable.delete(editingDish.id);
 
       // 添加更新后的菜品
@@ -1165,7 +1175,7 @@ export default function FoodOrderingPage() {
         // 添加更新后的菜品
         if (result && result.length > 0) {
           const updatedDish: Dish = {
-            id: result[0]?.id || editingDish.id,
+            id: result[0]?.id || editingDish.id, // Use new ID if available, otherwise fallback (though delete+create changes ID)
             name: editDishForm.name,
             description: editDishForm.description,
             price: editDishForm.price,
@@ -1174,18 +1184,12 @@ export default function FoodOrderingPage() {
           };
           return [...filtered, updatedDish];
         }
-        return filtered;
+        return filtered; // Return filtered if create failed
       });
 
       // 重置状态
       setEditingDish(null);
-      setEditDishForm({
-        name: "",
-        description: "",
-        price: 0,
-        image: "",
-        categoryIds: [],
-      });
+      // setEditDishForm is already reset in its declaration
       setImagePreview("");
       setShowEditDishModal(false);
       
@@ -1193,7 +1197,6 @@ export default function FoodOrderingPage() {
     } catch (error: any) {
       console.error("更新菜品失败:", error);
       
-      // 尝试获取更详细的错误信息
       let errorDetail = '';
       if (error.code) errorDetail += ` 错误代码: ${error.code}.`;
       if (error.message) errorDetail += ` 消息: ${error.message}.`;
@@ -1201,6 +1204,8 @@ export default function FoodOrderingPage() {
       if (error.hint) errorDetail += ` 提示: ${error.hint}.`;
       
       alert(`更新菜品失败: ${errorDetail || '未知错误'}`);
+    } finally { // Ensure isSubmitting is reset
+        setIsSubmitting(false);
     }
   };
 
@@ -1312,7 +1317,7 @@ export default function FoodOrderingPage() {
 
                     <div className="mb-4">
                       <h4 className="font-medium mb-2 text-emerald-700">餐品照片</h4>
-                      {order.images.length > 0 ? (
+                      {order.images && order.images.length > 0 ? (
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                           {order.images.map((image, index) => (
                             <div
@@ -1359,8 +1364,9 @@ export default function FoodOrderingPage() {
                               size="sm"
                               onClick={addMealImageToOrder}
                               className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                              disabled={isSubmitting}
                             >
-                              保存照片
+                              {isSubmitting ? "保存中..." : "保存照片"}
                             </Button>
                             <Button
                               size="sm"
@@ -1368,6 +1374,7 @@ export default function FoodOrderingPage() {
                               onClick={() => {
                                 setMealImage(null)
                                 setMealImagePreview("")
+                                setSelectedOrderId(null); // Clear selected order ID when cancelling
                               }}
                               className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
                             >
@@ -1500,7 +1507,7 @@ export default function FoodOrderingPage() {
                             <X className="h-4 w-4" />
                           </button>
                         </div>
-                        <p className="text-orange-500 text-sm">${item.dish.price.toFixed(2)}</p>
+                        <p className="text-orange-500 text-sm">¥{item.dish.price.toFixed(2)}</p> 
                         <div className="flex flex-wrap gap-1 mt-1 mb-1">
                           {item.dish.categoryIds.map((catId) => {
                             const category = getCategoryById(catId)
@@ -1537,7 +1544,7 @@ export default function FoodOrderingPage() {
                   ))}
                   <div className="flex items-center p-3 bg-emerald-50">
                     <p className="flex-1 font-bold text-emerald-700">Total</p>
-                    <p className="font-bold text-orange-500">${totalPrice.toFixed(2)}</p>
+                    <p className="font-bold text-orange-500">¥{totalPrice.toFixed(2)}</p>
                   </div>
                 </div>
               </div>
@@ -1690,7 +1697,7 @@ export default function FoodOrderingPage() {
                 <div 
                   className="h-2 bg-emerald-500 rounded-full" 
                   style={{ 
-                    width: `${(convertProgress.current / convertProgress.total) * 100}%` 
+                    width: `${convertProgress.total > 0 ? (convertProgress.current / convertProgress.total) * 100 : 0}%` 
                   }}
                 ></div>
               </div>
@@ -1715,7 +1722,7 @@ export default function FoodOrderingPage() {
           <div className="h-1.5 bg-gray-100 rounded-full">
             <div 
               className="h-1.5 bg-emerald-500 rounded-full transition-all duration-300" 
-              style={{width: `${(convertProgress.current / convertProgress.total) * 100}%`}}
+              style={{width: `${convertProgress.total > 0 ? (convertProgress.current / convertProgress.total) * 100 : 0}%`}}
             ></div>
           </div>
           <p className="text-xs text-gray-500 mt-1">
@@ -1823,7 +1830,7 @@ export default function FoodOrderingPage() {
                         console.error(`图片加载失败: ${dish.image}`);
                         (e.target as HTMLImageElement).src = "/placeholder.svg";
                       }}
-                      priority={false}
+                      priority={false} // Consider setting to true for images visible on initial load
                       sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                       unoptimized={dish.image?.startsWith('data:image')} 
                     />
@@ -1834,7 +1841,7 @@ export default function FoodOrderingPage() {
                           return category ? (
                             <Badge
                               key={catId}
-                              className={`${category.color} text-white rounded-full px-2`}
+                              className={`${category.color} text-white rounded-full px-2 text-xs`} // Ensure text size is appropriate
                               variant="secondary"
                             >
                               {category.name}
@@ -1849,7 +1856,7 @@ export default function FoodOrderingPage() {
                         size="icon"
                         className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
                         onClick={(e) => {
-                          e.stopPropagation();
+                          e.stopPropagation(); // Prevent card click if any
                           deleteDish(dish.id);
                         }}
                       >
@@ -1860,7 +1867,7 @@ export default function FoodOrderingPage() {
                         size="icon"
                         className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
                         onClick={(e) => {
-                          e.stopPropagation();
+                          e.stopPropagation(); // Prevent card click if any
                           startEditDish(dish);
                         }}
                       >
@@ -1943,7 +1950,7 @@ export default function FoodOrderingPage() {
       />
     </div>
   )
-}
+} // Correct closing brace for FoodOrderingPage
 
 // Cart component
 function Cart({
@@ -1996,7 +2003,7 @@ function Cart({
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                <p className="text-orange-500 text-sm">${item.dish.price.toFixed(2)}</p>
+                <p className="text-orange-500 text-sm">¥{item.dish.price.toFixed(2)}</p>
                 <div className="flex flex-wrap gap-1 mt-1 mb-1">
                   {item.dish.categoryIds.map((catId) => {
                     const category = getCategoryById(catId)
@@ -2038,7 +2045,7 @@ function Cart({
         <div className="mt-4 pt-4 border-t border-emerald-100">
           <div className="flex justify-between mb-4">
             <span className="font-semibold text-emerald-700">Total:</span>
-            <span className="font-bold text-orange-500">${totalPrice.toFixed(2)}</span>
+            <span className="font-bold text-orange-500">¥{totalPrice.toFixed(2)}</span>
           </div>
           <Button onClick={submitOrder} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-full">
             Submit Order
@@ -2163,7 +2170,7 @@ function AddDishModal({
                   id="dish-image"
                   accept="image/*"
                   className="hidden"
-                  onChange={handleImageChange}
+                  onChange={handleImageChange} // This should be the one from FoodOrderingPage props
                 />
                 <label htmlFor="dish-image">
                   <Button variant="outline" size="sm" className="mt-1" asChild>
@@ -2180,7 +2187,7 @@ function AddDishModal({
         
         <div className="p-4 border-t border-gray-200 flex justify-end">
           <Button 
-            onClick={addNewDish} 
+            onClick={addNewDish} // This should be the one from FoodOrderingPage props
             className="bg-emerald-500 hover:bg-emerald-600 text-white"
             disabled={isSubmitting}
           >
@@ -2208,7 +2215,7 @@ function EditDishModal({
   toggleDishCategory,
   categories,
   imagePreview,
-  handleImageChange,
+  handleImageChange, // This is a prop
   saveDish,
   isSubmitting,
 }: {
@@ -2219,7 +2226,7 @@ function EditDishModal({
   toggleDishCategory: (categoryId: string) => void
   categories: Category[]
   imagePreview: string
-  handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void // Prop type
   saveDish: () => void
   isSubmitting: boolean
 }) {
@@ -2313,7 +2320,7 @@ function EditDishModal({
                   id="edit-dish-image"
                   accept="image/*"
                   className="hidden"
-                  onChange={handleImageChange}
+                  onChange={handleImageChange} // Uses the prop passed from FoodOrderingPage
                 />
                 <label htmlFor="edit-dish-image">
                   <Button variant="outline" size="sm" className="mt-1" asChild>
@@ -2330,7 +2337,7 @@ function EditDishModal({
         
         <div className="p-4 border-t border-gray-200 flex justify-end">
           <Button 
-            onClick={saveDish} 
+            onClick={saveDish} // This should be the one from FoodOrderingPage props
             className="bg-emerald-500 hover:bg-emerald-600 text-white"
             disabled={isSubmitting}
           >
@@ -2409,7 +2416,7 @@ function CategoryModal({
                     }`}
                     onClick={() => handleNewCategoryChange({
                       target: { name: 'color', value: color }
-                    } as React.ChangeEvent<HTMLInputElement>)}
+                    } as React.ChangeEvent<any>)} // Use 'any' for synthetic event if needed, or adjust types
                   />
                 ))}
               </div>

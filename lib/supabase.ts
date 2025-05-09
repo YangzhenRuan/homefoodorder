@@ -12,15 +12,52 @@ if (!supabaseUrl || !supabaseKey) {
 // 创建Supabase客户端
 export const supabase = createClient(
   supabaseUrl || '',
-  supabaseKey || ''
+  supabaseKey || '',
+  {
+    auth: {
+      persistSession: false // 避免在SSR环境中的问题
+    },
+  }
 )
 
-// 检查Supabase连接是否有效的辅助函数
+// 检查Supabase连接和存储桶是否有效的辅助函数
 export const checkSupabaseConnection = async () => {
   try {
+    // 检查表连接
     const { data, error } = await supabase.from('categories').select('count').limit(1)
     if (error) throw error
-    return { success: true }
+    
+    // 尝试检查存储桶
+    try {
+      const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
+      if (bucketError) {
+        console.warn('Supabase存储桶检查失败:', bucketError.message);
+        return { 
+          success: true, 
+          storageReady: false,
+          message: '数据库连接成功，但存储服务可能不可用'
+        };
+      }
+      
+      const bucketExists = buckets?.some(bucket => bucket.name === 'food-images');
+      
+      if (!bucketExists) {
+        console.log('food-images存储桶不存在，将在需要时自动创建');
+      }
+      
+      return { 
+        success: true, 
+        storageReady: true,
+        bucketExists 
+      };
+    } catch (storageError: any) {
+      console.warn('检查存储服务时出错:', storageError.message);
+      return { 
+        success: true, 
+        storageReady: false,
+        message: '数据库连接成功，但存储服务检查失败' 
+      };
+    }
   } catch (error: any) {
     console.error('Supabase连接测试失败:', error.message)
     return { 

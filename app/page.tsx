@@ -1123,32 +1123,7 @@ export default function FoodOrderingPage() {
         categoryColors={categoryColors}
       />
 
-      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-2 flex justify-between items-center shadow-sm">
-        <h1 className="text-xl font-bold text-emerald-600">Sunny的点菜平台</h1>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-            onClick={() => setShowOrderHistory(true)}
-          >
-            <History className="h-4 w-4 mr-2" />
-            历史订单
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-            asChild
-          >
-            <Link href="/admin">
-              管理后台
-            </Link>
-          </Button>
-        </div>
-      </div>
-      
-      <div className="flex flex-col min-h-screen bg-emerald-50 pt-14">
+      <div className="flex flex-col min-h-screen bg-emerald-50">
         {/* 店铺信息 */}
         <div className="container mx-auto px-4 py-4">
           <div className="flex justify-between items-center">
@@ -1173,6 +1148,25 @@ export default function FoodOrderingPage() {
               >
                 <Tag className="h-4 w-4 mr-2" />
                 管理分类
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                onClick={() => setShowOrderHistory(true)}
+              >
+                <History className="h-4 w-4 mr-2" />
+                历史订单
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                asChild
+              >
+                <Link href="/admin">
+                  管理后台
+                </Link>
               </Button>
             </div>
           </div>

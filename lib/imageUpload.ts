@@ -60,28 +60,21 @@ export const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishe
   }
   
   try {
-    // 检查存储桶是否存在
+    // 检查存储桶是否存在 (或是否有权限访问)
     const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
-    const bucketExists = buckets?.some(bucket => bucket.name === 'food-images');
     
     if (bucketError) {
       console.error('获取存储桶列表错误:', bucketError);
-      throw bucketError;
+      // 抛出错误，让调用者处理
+      throw new Error(`检查存储桶权限失败: ${bucketError.message}`);
     }
     
-    // 如果存储桶不存在，则创建
+    const bucketExists = buckets?.some(bucket => bucket.name === 'food-images');
+    
+    // 如果存储桶不存在或无权访问，则直接报错，不再尝试创建
     if (!bucketExists) {
-      const { error: createBucketError } = await supabase.storage.createBucket('food-images', {
-        public: true, // 设置为公开访问
-        fileSizeLimit: 5242880, // 5MB限制
-      });
-      
-      if (createBucketError) {
-        console.error('创建存储桶错误:', createBucketError);
-        throw createBucketError;
-      }
-      
-      console.log('成功创建food-images存储桶');
+      console.error('存储桶 \'food-images\' 不存在或无权限访问。请在 Supabase Dashboard 中检查。');
+      throw new Error('存储桶 \'food-images\' 不存在或无权限访问。');
     }
     
     // 生成文件名 - 添加随机字符串避免并发冲突
@@ -124,12 +117,12 @@ export const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishe
         blob = new Blob(byteArrays, { type: contentType });
       } catch (blobError) {
         console.error('转换base64为Blob出错:', blobError);
-        return '/placeholder.svg';
+        return '/placeholder.svg'; // Or throw?
       }
     } else {
       // 服务器环境
       console.error('不支持在服务器端上传图片');
-      return '/placeholder.svg';
+      throw new Error('图片上传只能在客户端进行'); // Throw error instead of returning placeholder
     }
     
     // 上传图片到Supabase存储
@@ -147,20 +140,26 @@ export const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishe
         message: error.message,
         name: error.name
       });
-      return '/placeholder.svg';
+      throw error; // Re-throw the error
     }
     
     // 获取图片的公共URL
-    const { data: publicUrl } = supabase.storage
+    const { data: publicUrlData } = supabase.storage
       .from('food-images')
       .getPublicUrl(filePath);
+
+    if (!publicUrlData?.publicUrl) {
+        console.error('获取图片公共 URL 失败');
+        throw new Error('获取图片公共 URL 失败');
+    }
     
-    console.log('图片上传成功:', publicUrl.publicUrl);
-    return publicUrl.publicUrl;
+    console.log('图片上传成功:', publicUrlData.publicUrl);
+    return publicUrlData.publicUrl;
   } catch (error: any) {
     console.error('处理图片错误:', error);
-    console.error('错误详情:', error.message || '未知错误');
-    return '/placeholder.svg';
+    // console.error('错误详情:', error.message || '未知错误'); // Logged by previous catches
+    // 不再返回占位符，而是重新抛出错误，让调用者知道操作失败
+    throw error; 
   }
 };
 
@@ -168,103 +167,104 @@ export const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishe
 export const uploadWithRetry = async (imageDataUrl: string, prefix = 'dishes', retries = 2): Promise<string> => {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      // 调用已修改的 uploadImageToStorage，它现在会在失败时抛出错误
       return await uploadImageToStorage(imageDataUrl, prefix);
     } catch (error) {
       if (attempt === retries) {
         console.error(`上传失败，已重试${retries}次:`, error);
-        throw error;
+        throw error; // Re-throw the error after final attempt
       }
       // 等待时间随着重试次数增加
-      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-      console.log(`重试上传，第${attempt + 1}次...`);
+      const delay = 1000 * (attempt + 1);
+      console.log(`上传尝试 ${attempt + 1} 失败，将在 ${delay}ms 后重试...`);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
-  return '/placeholder.svg';
+  // 如果所有重试都失败，代码不应该到达这里，因为最后一次尝试会抛出错误
+  // 但为了类型安全和明确性，可以抛出一个最终错误
+  throw new Error('图片上传失败，已达到最大重试次数。');
 };
 
 // 验证Supabase存储是否可用
 export const checkStorageAvailability = async () => {
   try {
-    // 检查storage API是否可用
+    // 检查storage API是否可用 (listBuckets 需要 storage admin 或特定权限)
+    // 更好的检查方法可能是尝试一个受限的操作，比如列出特定桶的信息
+    // 或者假设如果 listBuckets 成功，则 API 可用
     const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
     
     if (bucketError) {
-      console.error('Supabase存储验证失败:', bucketError);
+      // 如果连列出桶都失败，很可能是配置或通用权限问题
+      console.error('Supabase存储验证失败 (listBuckets):', bucketError);
       return {
         checked: true,
         ready: false,
-        message: `存储服务不可用: ${bucketError.message}`
+        message: `存储服务检查失败: ${bucketError.message}. 请检查 API Key 和网络连接。`
       };
     }
     
-    // 检查food-images存储桶是否存在
+    // 检查 'food-images' 存储桶是否存在于返回的列表中
     const bucketExists = buckets?.some(bucket => bucket.name === 'food-images');
     
     if (!bucketExists) {
-      // 尝试创建存储桶
-      try {
-        const { error: createError } = await supabase.storage.createBucket('food-images', {
-          public: true,
-          fileSizeLimit: 5242880 // 5MB
-        });
-        
-        if (createError) {
-          console.error('创建存储桶失败:', createError);
-          return {
-            checked: true,
-            ready: false,
-            message: `无法创建存储桶: ${createError.message}`
-          };
-        }
-        
-        console.log('成功创建food-images存储桶');
-      } catch (error: any) {
-        console.error('创建存储桶时发生错误:', error);
-        return {
-          checked: true,
-          ready: false,
-          message: `创建存储桶时出错: ${error.message || '未知错误'}`
-        };
-      }
+      // 如果桶不存在于列表，报告问题，不再尝试创建
+      console.warn('存储桶 \'food-images\' 不存在或无权限查看。');
+      // 移除自动创建逻辑
+      // try { ... supabase.storage.createBucket ... } catch { ... }
+      return {
+        checked: true,
+        ready: false,
+        message: '存储桶 \'food-images\' 不存在或无权限访问。请在 Supabase Dashboard 中检查其是否存在且为公开。'
+      };
     }
     
-    // 测试上传小型测试文件
+    // 如果桶存在，尝试一个受限的操作来确认权限，比如上传一个测试文件
     try {
-      const testBlob = new Blob(['test'], { type: 'text/plain' });
-      const testPath = `test/storage-test-${Date.now()}.txt`;
+      const testBlob = new Blob(['storage-check'], { type: 'text/plain' });
+      const testPath = `_checks/storage-test-${Date.now()}.txt`;
       
       const { error: uploadError } = await supabase.storage
         .from('food-images')
-        .upload(testPath, testBlob, { upsert: true });
+        .upload(testPath, testBlob, { upsert: false }); // upsert: false to avoid overwriting if somehow exists
       
       if (uploadError) {
-        console.error('测试上传失败:', uploadError);
+        // 如果上传失败，说明权限可能有问题
+        console.error('存储桶 \'food-images\' 存在，但测试上传失败:', uploadError);
         return {
           checked: true,
           ready: false,
-          message: `测试上传失败: ${uploadError.message}`
+          message: `存储桶存在，但无法写入: ${uploadError.message}. 请检查 RLS 策略 (INSERT权限)。`
         };
       }
       
-      // 测试成功后删除测试文件
-      await supabase.storage
+      // 测试成功后立即删除测试文件
+      const { error: removeError } = await supabase.storage
         .from('food-images')
         .remove([testPath]);
       
+      if (removeError) {
+          // 如果删除失败，也报告问题，但这不如上传失败严重
+          console.warn('测试文件上传成功，但删除失败:', removeError);
+      }
+      
+      // 如果测试上传和（理想情况下）删除都成功，认为存储准备就绪
+      console.log('Supabase 存储服务检查通过。');
       return {
         checked: true,
         ready: true
       };
-    } catch (error: any) {
-      console.error('测试上传时发生错误:', error);
+    } catch (testError: any) {
+      // 捕获测试上传/删除过程中可能发生的其他错误
+      console.error('测试存储桶读写时发生错误:', testError);
       return {
         checked: true,
         ready: false,
-        message: `测试上传时出错: ${error.message || '未知错误'}`
+        message: `测试存储桶读写失败: ${testError.message || '未知错误'}`
       };
     }
   } catch (error: any) {
-    console.error('验证存储时发生错误:', error);
+    // 捕获最外层的 try...catch，通常是 listBuckets 调用失败
+    console.error('验证存储时发生未预料的错误:', error);
     return {
       checked: true,
       ready: false,

@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import { ShoppingCart, X, Plus, ArrowLeft, History, Camera, Tag, Search, Filter } from "lucide-react"
+import { ShoppingCart, X, Plus, ArrowLeft, History, Camera, Tag, Search, Filter, Edit, Trash } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
 
@@ -72,83 +72,6 @@ const jellycatColors = {
   accent5: "bg-teal-300",
 }
 
-// Sample categories with Jellycat-inspired colors
-const initialCategories: Category[] = [
-  { id: "appetizer", name: "Appetizers", color: jellycatColors.accent1 },
-  { id: "main", name: "Main Courses", color: jellycatColors.primary },
-  { id: "dessert", name: "Desserts", color: jellycatColors.accent2 },
-  { id: "drink", name: "Drinks", color: jellycatColors.accent4 },
-  { id: "vegetarian", name: "Vegetarian", color: jellycatColors.accent5 },
-]
-
-// Sample data with categories
-const initialDishes: Dish[] = [
-  {
-    id: 1,
-    name: "Margherita Pizza",
-    description: "Classic pizza with tomato sauce, mozzarella, and fresh basil",
-    price: 12.99,
-    image: "/delicious-pizza.png",
-    categoryIds: ["main"],
-  },
-  {
-    id: 2,
-    name: "Grilled Salmon",
-    description: "Fresh salmon fillet grilled to perfection with lemon and herbs",
-    price: 18.99,
-    image: "/fresh-salmon-fillet.png",
-    categoryIds: ["main"],
-  },
-  {
-    id: 3,
-    name: "Caesar Salad",
-    description: "Crisp romaine lettuce with Caesar dressing, croutons, and parmesan",
-    price: 9.99,
-    image: "/vibrant-mixed-salad.png",
-    categoryIds: ["appetizer", "vegetarian"],
-  },
-  {
-    id: 4,
-    name: "Beef Burger",
-    description: "Juicy beef patty with lettuce, tomato, cheese, and special sauce",
-    price: 14.99,
-    image: "/classic-beef-burger.png",
-    categoryIds: ["main"],
-  },
-  {
-    id: 5,
-    name: "Pasta Carbonara",
-    description: "Spaghetti with creamy sauce, pancetta, and parmesan cheese",
-    price: 13.99,
-    image: "/colorful-pasta-arrangement.png",
-    categoryIds: ["main"],
-  },
-  {
-    id: 6,
-    name: "Chicken Curry",
-    description: "Tender chicken in a rich curry sauce with basmati rice",
-    price: 15.99,
-    image: "/flavorful-curry.png",
-    categoryIds: ["main"],
-  },
-  {
-    id: 7,
-    name: "Vegetable Stir Fry",
-    description: "Fresh seasonal vegetables stir-fried with soy sauce and ginger",
-    price: 11.99,
-    image: "/colorful-vegetable-stirfry.png",
-    categoryIds: ["main", "vegetarian"],
-  },
-  {
-    id: 8,
-    name: "Chocolate Cake",
-    description: "Rich chocolate cake with a molten center and vanilla ice cream",
-    price: 7.99,
-    image: "/decadent-chocolate-cake.png",
-    categoryIds: ["dessert"],
-  },
-]
-
 // Available colors for categories - Jellycat-inspired palette
 const categoryColors = [
   jellycatColors.primary,
@@ -169,8 +92,8 @@ const categoryColors = [
 import { supabase, categoriesTable, dishesTable, ordersTable } from "@/lib/supabase"
 
 export default function FoodOrderingPage() {
-  const [dishes, setDishes] = useState<Dish[]>(initialDishes)
-  const [categories, setCategories] = useState<Category[]>(initialCategories)
+  const [dishes, setDishes] = useState<Dish[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [cart, setCart] = useState<CartItem[]>([])
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo>({
@@ -179,6 +102,8 @@ export default function FoodOrderingPage() {
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [orderComplete, setOrderComplete] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // State for add dish modal
   const [showAddDishModal, setShowAddDishModal] = useState(false)
@@ -209,33 +134,79 @@ export default function FoodOrderingPage() {
   const [mealImage, setMealImage] = useState<File | null>(null)
   const [mealImagePreview, setMealImagePreview] = useState<string>("")
 
-  // Load data from localStorage on initial render
+  // 添加编辑菜品相关状态
+  const [showEditDishModal, setShowEditDishModal] = useState(false);
+  const [editingDish, setEditingDish] = useState<Dish | null>(null);
+  const [editDishForm, setEditDishForm] = useState<Omit<Dish, "id">>({
+    name: "",
+    description: "",
+    price: 0,
+    image: "",
+    categoryIds: [],
+  });
+
+  // 加载分类和菜品数据
+  const loadData = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    
+    try {
+      // 加载分类数据
+      const categoriesData = await categoriesTable.getAll();
+      if (categoriesData) {
+        const formattedCategories: Category[] = categoriesData.map(cat => ({
+          id: cat.id,
+          name: cat.name,
+          color: cat.color || jellycatColors.primary // 使用默认颜色如果没有设置
+        }));
+        setCategories(formattedCategories);
+      }
+      
+      // 加载菜品数据
+      const dishesData = await dishesTable.getAll();
+      if (dishesData) {
+        // 首先按id分组菜品，因为一个菜品可能有多个分类
+        const dishGroups: { [key: string]: any[] } = {};
+        
+        dishesData.forEach(dish => {
+          const name = dish.name;
+          if (!dishGroups[name]) {
+            dishGroups[name] = [];
+          }
+          dishGroups[name].push(dish);
+        });
+        
+        // 然后将分组的菜品格式化为前端需要的结构
+        const formattedDishes: Dish[] = Object.values(dishGroups).map(dishGroup => {
+          const firstDish = dishGroup[0];
+          
+          return {
+            id: firstDish.id,
+            name: firstDish.name,
+            description: firstDish.description,
+            price: firstDish.price,
+            image: firstDish.image || "/placeholder.svg",
+            categoryIds: dishGroup.map(d => d.category_id)
+          };
+        });
+        
+        setDishes(formattedDishes);
+      }
+    } catch (error: any) {
+      console.error('加载数据失败:', error);
+      setLoadError(error.message || '无法加载数据，请检查网络连接');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 初始加载数据
   useEffect(() => {
-    // Load categories
-    const savedCategories = localStorage.getItem("categories")
-    if (savedCategories) {
-      try {
-        setCategories(JSON.parse(savedCategories))
-      } catch (error) {
-        console.error("Error loading categories:", error)
-      }
-    }
+    loadData();
+    fetchOrderHistory();
+  }, []);
 
-    // Load dishes
-    const savedDishes = localStorage.getItem("dishes")
-    if (savedDishes) {
-      try {
-        setDishes(JSON.parse(savedDishes))
-      } catch (error) {
-        console.error("Error loading dishes:", error)
-      }
-    }
-
-    // 从Supabase加载订单历史
-    fetchOrderHistory()
-  }, [])
-
-  // Save data to localStorage whenever it changes
+  // 只在开发环境保存到localStorage的逻辑，发布后可以移除
   useEffect(() => {
     if (categories.length > 0) {
       localStorage.setItem("categories", JSON.stringify(categories))
@@ -760,6 +731,117 @@ export default function FoodOrderingPage() {
     }).format(date)
   }
 
+  // 开始编辑菜品
+  const startEditDish = (dish: Dish) => {
+    setEditingDish(dish);
+    setEditDishForm({
+      name: dish.name,
+      description: dish.description,
+      price: dish.price,
+      image: dish.image,
+      categoryIds: [...dish.categoryIds],
+    });
+    setImagePreview(dish.image); // 设置图片预览
+    setShowEditDishModal(true);
+  };
+
+  // 处理编辑表单变化
+  const handleEditDishChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setEditDishForm((prev) => ({
+      ...prev,
+      [name]: name === "price" ? Number.parseFloat(value) || 0 : value,
+    }));
+  };
+
+  // 切换编辑菜品分类选择
+  const toggleEditDishCategory = (categoryId: string) => {
+    setEditDishForm((prev) => {
+      const categoryIds = prev.categoryIds.includes(categoryId)
+        ? prev.categoryIds.filter((id) => id !== categoryId)
+        : [...prev.categoryIds, categoryId];
+      return { ...prev, categoryIds };
+    });
+  };
+
+  // 保存编辑的菜品
+  const saveEditedDish = async () => {
+    if (!editingDish) return;
+
+    // 验证表单
+    if (!editDishForm.name || !editDishForm.description || editDishForm.price <= 0) {
+      alert("请填写所有必填字段");
+      return;
+    }
+
+    if (editDishForm.categoryIds.length === 0) {
+      alert("请至少选择一个分类");
+      return;
+    }
+
+    try {
+      // 使用图片预览或保留原图
+      const dishImage = imagePreview || editDishForm.image;
+
+      // 先删除原有菜品
+      await dishesTable.delete(editingDish.id);
+
+      // 添加更新后的菜品
+      const result = await dishesTable.create({
+        name: editDishForm.name,
+        description: editDishForm.description,
+        price: editDishForm.price,
+        image: dishImage,
+        category_ids: editDishForm.categoryIds
+      });
+
+      // 更新本地状态
+      setDishes((prev) => {
+        // 移除旧菜品
+        const filtered = prev.filter(dish => dish.id !== editingDish.id);
+        
+        // 添加更新后的菜品
+        if (result && result.length > 0) {
+          const updatedDish: Dish = {
+            id: result[0]?.id || editingDish.id,
+            name: editDishForm.name,
+            description: editDishForm.description,
+            price: editDishForm.price,
+            image: dishImage,
+            categoryIds: editDishForm.categoryIds,
+          };
+          return [...filtered, updatedDish];
+        }
+        return filtered;
+      });
+
+      // 重置状态
+      setEditingDish(null);
+      setEditDishForm({
+        name: "",
+        description: "",
+        price: 0,
+        image: "",
+        categoryIds: [],
+      });
+      setImagePreview("");
+      setShowEditDishModal(false);
+      
+      alert("菜品更新成功");
+    } catch (error: any) {
+      console.error("更新菜品失败:", error);
+      
+      // 尝试获取更详细的错误信息
+      let errorDetail = '';
+      if (error.code) errorDetail += ` 错误代码: ${error.code}.`;
+      if (error.message) errorDetail += ` 消息: ${error.message}.`;
+      if (error.details) errorDetail += ` 详情: ${error.details}.`;
+      if (error.hint) errorDetail += ` 提示: ${error.hint}.`;
+      
+      alert(`更新菜品失败: ${errorDetail || '未知错误'}`);
+    }
+  };
+
   // If showing order history
   if (showOrderHistory) {
     return (
@@ -1096,6 +1178,36 @@ export default function FoodOrderingPage() {
     )
   }
 
+  // 在返回的JSX中，添加加载状态显示
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-emerald-50 flex justify-center items-center">
+        <div className="text-center p-8 bg-white rounded-lg shadow-md">
+          <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <h2 className="text-2xl font-bold text-emerald-700 mb-2">正在加载</h2>
+          <p className="text-emerald-600">请稍候，正在获取菜单数据...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-emerald-50 flex justify-center items-center">
+        <div className="text-center p-8 bg-white rounded-lg shadow-md max-w-md">
+          <div className="w-16 h-16 bg-red-100 text-red-500 flex items-center justify-center rounded-full mx-auto mb-4">
+            <X className="h-8 w-8" />
+          </div>
+          <h2 className="text-2xl font-bold text-red-700 mb-2">加载失败</h2>
+          <p className="text-gray-600 mb-4">{loadError}</p>
+          <Button onClick={loadData} className="bg-emerald-500 hover:bg-emerald-600 text-white">
+            重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative min-h-screen bg-gray-50">
       {/* 加菜弹窗 */}
@@ -1109,6 +1221,19 @@ export default function FoodOrderingPage() {
         imagePreview={imagePreview}
         handleImageChange={handleImageChange}
         addNewDish={addNewDish}
+      />
+
+      {/* 编辑菜品弹窗 */}
+      <EditDishModal
+        show={showEditDishModal}
+        onClose={() => setShowEditDishModal(false)}
+        dishForm={editDishForm}
+        handleDishChange={handleEditDishChange}
+        toggleDishCategory={toggleEditDishCategory}
+        categories={categories}
+        imagePreview={imagePreview}
+        handleImageChange={handleImageChange}
+        saveDish={saveEditedDish}
       />
 
       {/* 管理分类弹窗 */}
@@ -1267,17 +1392,30 @@ export default function FoodOrderingPage() {
                           })}
                         </div>
                       )}
-                      <Button
-                        variant="destructive"
-                        size="icon"
-                        className="absolute top-2 left-2 h-8 w-8 rounded-full opacity-80 hover:opacity-100"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteDish(dish.id);
-                        }}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
+                      <div className="absolute top-2 left-2 flex gap-1">
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteDish(dish.id);
+                          }}
+                        >
+                          <Trash className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="icon"
+                          className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startEditDish(dish);
+                          }}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                     <CardContent className="p-4">
                       <div className="flex justify-between items-start mb-2">
@@ -1541,6 +1679,143 @@ function AddDishModal({
         <div className="p-4 border-t border-gray-200 flex justify-end">
           <Button onClick={addNewDish} className="bg-emerald-500 hover:bg-emerald-600 text-white">
             保存菜品
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 编辑菜品弹窗组件
+function EditDishModal({
+  show,
+  onClose,
+  dishForm,
+  handleDishChange,
+  toggleDishCategory,
+  categories,
+  imagePreview,
+  handleImageChange,
+  saveDish,
+}: {
+  show: boolean
+  onClose: () => void
+  dishForm: Omit<Dish, "id">
+  handleDishChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void
+  toggleDishCategory: (categoryId: string) => void
+  categories: Category[]
+  imagePreview: string
+  handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  saveDish: () => void
+}) {
+  if (!show) return null
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold text-emerald-700">编辑菜品</h2>
+            <Button variant="ghost" size="sm" onClick={onClose} className="text-gray-500">
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+        
+        <div className="p-4 space-y-4">
+          <div>
+            <Label htmlFor="edit-dish-name">菜品名称</Label>
+            <Input
+              id="edit-dish-name"
+              name="name"
+              value={dishForm.name}
+              onChange={handleDishChange}
+              placeholder="输入菜品名称"
+              className="mt-1"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="edit-dish-description">描述</Label>
+            <Textarea
+              id="edit-dish-description"
+              name="description"
+              value={dishForm.description}
+              onChange={handleDishChange}
+              placeholder="输入菜品描述"
+              className="mt-1"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="edit-dish-price">价格</Label>
+            <Input
+              id="edit-dish-price"
+              name="price"
+              type="number"
+              step="0.01"
+              min="0"
+              value={dishForm.price === 0 ? "" : dishForm.price}
+              onChange={handleDishChange}
+              placeholder="输入价格"
+              className="mt-1"
+            />
+          </div>
+          
+          <div>
+            <Label>分类</Label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {categories.map((category) => (
+                <div key={category.id} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`edit-category-${category.id}`}
+                    checked={dishForm.categoryIds.includes(category.id)}
+                    onCheckedChange={() => toggleDishCategory(category.id)}
+                  />
+                  <Label
+                    htmlFor={`edit-category-${category.id}`}
+                    className="cursor-pointer text-sm font-normal"
+                  >
+                    {category.name}
+                  </Label>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <div>
+            <Label>图片</Label>
+            <div className="mt-1">
+              {imagePreview ? (
+                <div className="relative aspect-video rounded-lg overflow-hidden mb-2">
+                  <Image src={imagePreview} alt="Preview" fill className="object-cover" />
+                </div>
+              ) : null}
+              
+              <div>
+                <input
+                  type="file"
+                  id="edit-dish-image"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImageChange}
+                />
+                <label htmlFor="edit-dish-image">
+                  <Button variant="outline" size="sm" className="mt-1" asChild>
+                    <span>
+                      <Camera className="h-4 w-4 mr-2" />
+                      {imagePreview ? "更换图片" : "上传图片"}
+                    </span>
+                  </Button>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="p-4 border-t border-gray-200 flex justify-end">
+          <Button onClick={saveDish} className="bg-emerald-500 hover:bg-emerald-600 text-white">
+            保存更改
           </Button>
         </div>
       </div>

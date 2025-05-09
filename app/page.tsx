@@ -91,6 +91,50 @@ const categoryColors = [
 // 新增导入Supabase客户端和表操作函数
 import { supabase, categoriesTable, dishesTable, ordersTable, checkSupabaseConnection } from "@/lib/supabase"
 
+// 添加图片处理函数，压缩图片尺寸
+const processImage = (file: File, maxWidth = 800): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = document.createElement('img');
+      img.onload = () => {
+        // 限制图片最大尺寸
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > maxWidth) {
+          height = Math.floor(height * (maxWidth / width));
+          width = maxWidth;
+        }
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('无法创建canvas上下文'));
+          return;
+        }
+        
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // 使用较低质量导出以减小文件大小
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        resolve(dataUrl);
+      };
+      img.onerror = () => {
+        reject(new Error('图片加载失败'));
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => {
+      reject(new Error('文件读取失败'));
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
 export default function FoodOrderingPage() {
   const [dishes, setDishes] = useState<Dish[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -193,12 +237,25 @@ export default function FoodOrderingPage() {
           const formattedDishes: Dish[] = Object.values(dishGroups).map(dishGroup => {
             const firstDish = dishGroup[0];
             
+            // 处理图片 - 检测是否为base64编码并确保其有效
+            let imageUrl = "/placeholder.svg";
+            if (firstDish.image) {
+              // 如果图片是base64数据，使用占位图像
+              if (firstDish.image.startsWith('data:image')) {
+                // 截取base64数据，防止过大 (只保留开头部分作为调试用途)
+                console.log(`菜品 ${firstDish.name} 使用了base64图片，建议改为URL引用`);
+                imageUrl = "/placeholder.svg";
+              } else {
+                imageUrl = firstDish.image;
+              }
+            }
+            
             return {
               id: firstDish.id,
               name: firstDish.name,
-              description: firstDish.description,
-              price: firstDish.price,
-              image: firstDish.image || "/placeholder.svg",
+              description: firstDish.description || "",
+              price: firstDish.price || 0,
+              image: imageUrl,
               categoryIds: dishGroup.map(d => d.category_id)
             };
           });
@@ -415,33 +472,39 @@ export default function FoodOrderingPage() {
   }
 
   // Handle image upload for new dish
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     setImageFile(file)
 
-    // Create preview
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setImagePreview(reader.result as string)
+    try {
+      // 处理并压缩图片
+      const processedImage = await processImage(file);
+      setImagePreview(processedImage);
+    } catch (error) {
+      console.error('图片处理失败:', error);
+      alert('图片处理失败，请尝试使用较小的图片');
+      setImageFile(null);
     }
-    reader.readAsDataURL(file)
   }
 
   // Handle image upload for meal in order history
-  const handleMealImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMealImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     setMealImage(file)
 
-    // Create preview
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setMealImagePreview(reader.result as string)
+    try {
+      // 处理并压缩图片
+      const processedImage = await processImage(file);
+      setMealImagePreview(processedImage);
+    } catch (error) {
+      console.error('图片处理失败:', error);
+      alert('图片处理失败，请尝试使用较小的图片');
+      setMealImage(null);
     }
-    reader.readAsDataURL(file)
   }
 
   // 修改添加图片到订单的功能
@@ -449,6 +512,12 @@ export default function FoodOrderingPage() {
     if (!selectedOrderId || !mealImagePreview || !mealImage) return
 
     try {
+      // 检查图片大小
+      if (mealImagePreview.length > 200000) { // 约200KB
+        alert("图片太大，请使用较小的图片或减小图片尺寸");
+        return;
+      }
+      
       // 将图片上传到Supabase存储
       const fileName = `${Date.now()}.jpg`;
       const filePath = `${selectedOrderId}/${fileName}`;
@@ -545,13 +614,27 @@ export default function FoodOrderingPage() {
     try {
       // Use image preview if available, otherwise use placeholder
       const dishImage = imagePreview || "/placeholder.svg";
+      
+      // 确保图片不是base64编码，或者如果是base64，确保它不太大
+      let finalImageUrl = "/placeholder.svg";
+      if (dishImage.startsWith('data:image')) {
+        // 如果是base64图片，检查大小 - 如果超过某个阈值，使用占位图
+        if (dishImage.length > 200000) { // 约200KB
+          console.warn("图片太大，使用占位图");
+          finalImageUrl = "/placeholder.svg";
+        } else {
+          finalImageUrl = dishImage;
+        }
+      } else {
+        finalImageUrl = dishImage;
+      }
 
       // 同步到数据库
       console.log("正在保存菜品到数据库:", {
         name: newDish.name,
         description: newDish.description,
         price: newDish.price,
-        image: dishImage,
+        image: finalImageUrl,
         category_ids: newDish.categoryIds
       });
       
@@ -559,7 +642,7 @@ export default function FoodOrderingPage() {
         name: newDish.name,
         description: newDish.description,
         price: newDish.price,
-        image: dishImage,
+        image: finalImageUrl,
         category_ids: newDish.categoryIds
       });
       
@@ -573,7 +656,7 @@ export default function FoodOrderingPage() {
           name: newDish.name,
           description: newDish.description,
           price: newDish.price,
-          image: dishImage,
+          image: finalImageUrl,
           categoryIds: newDish.categoryIds,
         };
         
@@ -802,6 +885,20 @@ export default function FoodOrderingPage() {
     try {
       // 使用图片预览或保留原图
       const dishImage = imagePreview || editDishForm.image;
+      
+      // 确保图片不是base64编码，或者如果是base64，确保它不太大
+      let finalImageUrl = "/placeholder.svg";
+      if (dishImage.startsWith('data:image')) {
+        // 如果是base64图片，检查大小 - 如果超过某个阈值，使用占位图
+        if (dishImage.length > 200000) { // 约200KB
+          console.warn("图片太大，使用占位图");
+          finalImageUrl = "/placeholder.svg";
+        } else {
+          finalImageUrl = dishImage;
+        }
+      } else {
+        finalImageUrl = dishImage;
+      }
 
       // 先删除原有菜品
       await dishesTable.delete(editingDish.id);
@@ -811,7 +908,7 @@ export default function FoodOrderingPage() {
         name: editDishForm.name,
         description: editDishForm.description,
         price: editDishForm.price,
-        image: dishImage,
+        image: finalImageUrl,
         category_ids: editDishForm.categoryIds
       });
 
@@ -827,7 +924,7 @@ export default function FoodOrderingPage() {
             name: editDishForm.name,
             description: editDishForm.description,
             price: editDishForm.price,
-            image: dishImage,
+            image: finalImageUrl,
             categoryIds: editDishForm.categoryIds,
           };
           return [...filtered, updatedDish];
@@ -1383,8 +1480,11 @@ export default function FoodOrderingPage() {
                           sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                           className="object-cover"
                           onError={(e) => {
-                            ;(e.target as HTMLImageElement).src = "/placeholder.svg"
+                            console.error(`图片加载失败: ${dish.image}`);
+                            (e.target as HTMLImageElement).src = "/placeholder.svg";
                           }}
+                          priority={false}
+                          unoptimized={dish.image?.startsWith('data:image')}
                         />
                         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Button

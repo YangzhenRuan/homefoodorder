@@ -1725,35 +1725,222 @@ export default function FoodOrderingPage() {
             categoryColors={categoryColors}
           />
 
-          {/* 底部购物车 - 移动端 */}
-          {cart.length > 0 && (
-            <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 lg:hidden">
-              <div className="flex justify-between items-center mb-2">
-                <div className="flex items-center">
-                  <ShoppingCart className="text-emerald-500 mr-2 h-5 w-5" />
-                  <span className="font-medium">{cart.reduce((sum, item) => sum + item.quantity, 0)}件商品</span>
+          <div className="flex flex-col min-h-screen bg-emerald-50">
+            {/* 店铺信息 */}
+            <div className="container mx-auto px-4 py-4">
+              <div className="flex justify-between items-center">
+                <h1 className="text-2xl font-bold text-emerald-700">
+                  <span className="text-orange-400">Sunny</span> 点菜平台
+                </h1>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                    onClick={() => setShowAddDishModal(true)}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    加菜
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                    onClick={() => setShowCategoryModal(true)}
+                  >
+                    <Tag className="h-4 w-4 mr-2" />
+                    管理分类
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                    onClick={() => setShowOrderHistory(true)}
+                  >
+                    <History className="h-4 w-4 mr-2" />
+                    历史订单
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                    asChild
+                  >
+                    <Link href="/admin">
+                      管理后台
+                    </Link>
+                  </Button>
                 </div>
-                <div className="font-bold text-orange-500">¥{totalPrice.toFixed(2)}</div>
               </div>
-              <Button onClick={submitOrder} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white">
-                提交订单
-              </Button>
             </div>
-          )}
+
+            <div className="flex flex-1">
+              {/* Main content */}
+              <main className="flex-1 container mx-auto px-4 py-4">
+                {/* Search and filter */}
+                <div className="mb-6 flex flex-col sm:flex-row gap-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-emerald-400" />
+                    <Input
+                      placeholder="Search dishes..."
+                      className="pl-10 border-emerald-200 focus:border-emerald-300 focus:ring-emerald-300 rounded-full"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
+                    <Button
+                      variant={activeCategory === null ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setActiveCategory(null)}
+                      className={
+                        activeCategory === null
+                          ? "bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
+                          : "border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                      }
+                    >
+                      All
+                    </Button>
+                    {categories.map((category) => (
+                      <Button
+                        key={category.id}
+                        variant={activeCategory === category.id ? "default" : "outline"}
+                        size="sm"
+                        className={
+                          activeCategory === category.id
+                            ? `${category.color} text-white rounded-full`
+                            : "border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                        }
+                        onClick={() => setActiveCategory(category.id)}
+                      >
+                        {category.name}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <h2 className="text-2xl font-semibold mb-6 text-emerald-700">
+                  {activeCategory
+                    ? `${getCategoryById(activeCategory)?.name || "Category"} Menu`
+                    : searchTerm
+                      ? "Search Results"
+                      : "Our Menu"}
+                </h2>
+
+                {filteredDishes.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Filter className="h-10 w-10 text-emerald-500" />
+                    </div>
+                    <h3 className="text-xl font-semibold mb-2 text-emerald-700">No dishes found</h3>
+                    <p className="text-emerald-600 mb-6">Try changing your search or filter criteria</p>
+                    <Button
+                      onClick={() => {
+                        setActiveCategory(null)
+                        setSearchTerm("")
+                      }}
+                      className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
+                    >
+                      Clear Filters
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredDishes.map((dish) => (
+                      <Card
+                        key={dish.id}
+                        className="overflow-hidden border-emerald-200 rounded-xl shadow-md hover:shadow-lg transition-shadow duration-200"
+                      >
+                        <div className="relative h-48">
+                          <Image 
+                            src={dish.image || "/placeholder.svg"} 
+                            alt={dish.name} 
+                            fill 
+                            className="object-cover"
+                            onError={(e) => {
+                              console.error(`图片加载失败: ${dish.image}`);
+                              (e.target as HTMLImageElement).src = "/placeholder.svg";
+                            }}
+                            priority={false}
+                            unoptimized={dish.image?.startsWith('data:image')} 
+                          />
+                          {dish.categoryIds.length > 0 && (
+                            <div className="absolute top-2 right-2 flex flex-wrap gap-1 justify-end max-w-[70%]">
+                              {dish.categoryIds.map((catId) => {
+                                const category = getCategoryById(catId)
+                                return category ? (
+                                  <Badge
+                                    key={catId}
+                                    className={`${category.color} text-white rounded-full px-2`}
+                                    variant="secondary"
+                                  >
+                                    {category.name}
+                                  </Badge>
+                                ) : null
+                              })}
+                            </div>
+                          )}
+                          <div className="absolute top-2 left-2 flex gap-1">
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteDish(dish.id);
+                              }}
+                            >
+                              <Trash className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="icon"
+                              className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startEditDish(dish);
+                              }}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <h3 className="text-lg font-semibold text-emerald-700">{dish.name}</h3>
+                            <span className="font-bold text-orange-500">¥{dish.price.toFixed(2)}</span>
+                          </div>
+                          <p className="text-emerald-600 text-sm mb-4">{dish.description}</p>
+                        </CardContent>
+                        <CardFooter className="p-4 pt-0">
+                          <Button
+                            onClick={() => addToCart(dish)}
+                            className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
+                          >
+                            Add to Order
+                          </Button>
+                        </CardFooter>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </main>
+
+              {/* Desktop sidebar cart */}
+              <aside className="hidden lg:block w-80 border-l border-emerald-100 bg-white p-4 sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto">
+                <Cart
+                  cart={cart}
+                  updateQuantity={updateQuantity}
+                  removeFromCart={removeFromCart}
+                  totalPrice={totalPrice}
+                  submitOrder={submitOrder}
+                  getCategoryById={getCategoryById}
+                />
+              </aside>
+            </div>
+          </div>
         </div>
       )}
-
-      {/* 右侧购物车 - 桌面端 */}
-      <div className="hidden lg:block fixed right-4 bottom-4 top-32 w-80 bg-white shadow-lg rounded-lg overflow-hidden border border-gray-200 z-10">
-        <Cart
-          cart={cart}
-          updateQuantity={updateQuantity}
-          removeFromCart={removeFromCart}
-          totalPrice={totalPrice}
-          submitOrder={submitOrder}
-          getCategoryById={getCategoryById}
-        />
-      </div>
     </div>
   )
 }

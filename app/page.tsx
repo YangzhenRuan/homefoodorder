@@ -89,7 +89,7 @@ const categoryColors = [
 ]
 
 // 新增导入Supabase客户端和表操作函数
-import { supabase, categoriesTable, dishesTable, ordersTable } from "@/lib/supabase"
+import { supabase, categoriesTable, dishesTable, ordersTable, checkSupabaseConnection } from "@/lib/supabase"
 
 export default function FoodOrderingPage() {
   const [dishes, setDishes] = useState<Dish[]>([])
@@ -145,12 +145,24 @@ export default function FoodOrderingPage() {
     categoryIds: [],
   });
 
+  // 使用useEffect加载数据
+  useEffect(() => {
+    loadData();
+    fetchOrderHistory();
+  }, []);
+
   // 加载分类和菜品数据
   const loadData = async () => {
     setIsLoading(true);
     setLoadError(null);
     
     try {
+      // 首先检查Supabase连接
+      const connectionCheck = await checkSupabaseConnection();
+      if (!connectionCheck.success) {
+        throw new Error(`Supabase连接失败: ${connectionCheck.error}. ${connectionCheck.details}`);
+      }
+      
       // 加载分类数据
       const categoriesData = await categoriesTable.getAll();
       if (categoriesData) {
@@ -165,46 +177,54 @@ export default function FoodOrderingPage() {
       // 加载菜品数据
       const dishesData = await dishesTable.getAll();
       if (dishesData) {
-        // 首先按id分组菜品，因为一个菜品可能有多个分类
-        const dishGroups: { [key: string]: any[] } = {};
-        
-        dishesData.forEach(dish => {
-          const name = dish.name;
-          if (!dishGroups[name]) {
-            dishGroups[name] = [];
-          }
-          dishGroups[name].push(dish);
-        });
-        
-        // 然后将分组的菜品格式化为前端需要的结构
-        const formattedDishes: Dish[] = Object.values(dishGroups).map(dishGroup => {
-          const firstDish = dishGroup[0];
+        try {
+          // 首先按id分组菜品，因为一个菜品可能有多个分类
+          const dishGroups: { [key: string]: any[] } = {};
           
-          return {
-            id: firstDish.id,
-            name: firstDish.name,
-            description: firstDish.description,
-            price: firstDish.price,
-            image: firstDish.image || "/placeholder.svg",
-            categoryIds: dishGroup.map(d => d.category_id)
-          };
-        });
-        
-        setDishes(formattedDishes);
+          dishesData.forEach(dish => {
+            const name = dish.name;
+            if (!dishGroups[name]) {
+              dishGroups[name] = [];
+            }
+            dishGroups[name].push(dish);
+          });
+          
+          // 然后将分组的菜品格式化为前端需要的结构
+          const formattedDishes: Dish[] = Object.values(dishGroups).map(dishGroup => {
+            const firstDish = dishGroup[0];
+            
+            return {
+              id: firstDish.id,
+              name: firstDish.name,
+              description: firstDish.description,
+              price: firstDish.price,
+              image: firstDish.image || "/placeholder.svg",
+              categoryIds: dishGroup.map(d => d.category_id)
+            };
+          });
+          
+          setDishes(formattedDishes);
+        } catch (formatError: any) {
+          console.error('菜品数据格式化失败:', formatError);
+          setLoadError(`菜品数据处理错误: ${formatError.message}`);
+        }
       }
     } catch (error: any) {
       console.error('加载数据失败:', error);
-      setLoadError(error.message || '无法加载数据，请检查网络连接');
+      setLoadError(error.message || '无法加载数据，请检查网络连接和环境变量配置');
+      
+      // 如果错误看起来与环境变量有关，则提供更具体的错误信息
+      if (error.message && (
+          error.message.includes('环境变量') || 
+          error.message.includes('API key') ||
+          error.message.includes('URL')
+        )) {
+        setLoadError('Supabase配置错误：请确保在Vercel上设置了NEXT_PUBLIC_SUPABASE_URL和NEXT_PUBLIC_SUPABASE_ANON_KEY环境变量。');
+      }
     } finally {
       setIsLoading(false);
     }
   };
-
-  // 初始加载数据
-  useEffect(() => {
-    loadData();
-    fetchOrderHistory();
-  }, []);
 
   // 只在开发环境保存到localStorage的逻辑，发布后可以移除
   useEffect(() => {
@@ -1209,248 +1229,462 @@ export default function FoodOrderingPage() {
   }
 
   return (
-    <div className="relative min-h-screen bg-gray-50">
-      {/* 加菜弹窗 */}
-      <AddDishModal
-        show={showAddDishModal}
-        onClose={() => setShowAddDishModal(false)}
-        newDish={newDish}
-        handleNewDishChange={handleNewDishChange}
-        toggleDishCategory={toggleDishCategory}
-        categories={categories}
-        imagePreview={imagePreview}
-        handleImageChange={handleImageChange}
-        addNewDish={addNewDish}
-      />
+    <div className="container mx-auto p-4 pb-20">
+      <h1 className="text-2xl font-bold mb-6 flex items-center justify-between">
+        <span>家庭点餐系统</span>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className="flex items-center gap-1 bg-orange-100 text-orange-700 border-orange-300 hover:bg-orange-200"
+            onClick={() => setShowOrderHistory(true)}
+          >
+            <History className="w-4 h-4" />
+            <span className="hidden sm:inline">历史订单</span>
+          </Button>
+          <Link href="/admin">
+            <Button
+              variant="outline"
+              className="flex items-center gap-1 bg-orange-100 text-orange-700 border-orange-300 hover:bg-orange-200"
+            >
+              管理后台
+            </Button>
+          </Link>
+        </div>
+      </h1>
 
-      {/* 编辑菜品弹窗 */}
-      <EditDishModal
-        show={showEditDishModal}
-        onClose={() => setShowEditDishModal(false)}
-        dishForm={editDishForm}
-        handleDishChange={handleEditDishChange}
-        toggleDishCategory={toggleEditDishCategory}
-        categories={categories}
-        imagePreview={imagePreview}
-        handleImageChange={handleImageChange}
-        saveDish={saveEditedDish}
-      />
-
-      {/* 管理分类弹窗 */}
-      <CategoryModal
-        show={showCategoryModal}
-        onClose={() => setShowCategoryModal(false)}
-        categories={categories}
-        newCategory={newCategory}
-        handleNewCategoryChange={handleNewCategoryChange}
-        addNewCategory={addNewCategory}
-        deleteCategory={deleteCategory}
-        categoryColors={categoryColors}
-      />
-
-      <div className="flex flex-col min-h-screen bg-emerald-50">
-        {/* 店铺信息 */}
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-emerald-700">
-              <span className="text-orange-400">Sunny</span> 点菜平台
-            </h1>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                onClick={() => setShowAddDishModal(true)}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                加菜
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                onClick={() => setShowCategoryModal(true)}
-              >
-                <Tag className="h-4 w-4 mr-2" />
-                管理分类
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                onClick={() => setShowOrderHistory(true)}
-              >
-                <History className="h-4 w-4 mr-2" />
-                历史订单
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                asChild
-              >
-                <Link href="/admin">
-                  管理后台
-                </Link>
-              </Button>
+      {/* 添加错误提示组件 */}
+      {loadError && (
+        <div className="mb-6 p-4 bg-red-100 border border-red-300 rounded-md text-red-800">
+          <h3 className="font-bold text-lg mb-2">加载错误</h3>
+          <p>{loadError}</p>
+          {loadError.includes('环境变量') && (
+            <div className="mt-3 p-3 bg-white rounded border border-red-200">
+              <p className="font-semibold">解决方法:</p>
+              <ol className="list-decimal list-inside mt-2">
+                <li>在Vercel项目设置中添加以下环境变量:</li>
+                <ul className="list-disc list-inside ml-6 mt-1">
+                  <li>NEXT_PUBLIC_SUPABASE_URL</li>
+                  <li>NEXT_PUBLIC_SUPABASE_ANON_KEY</li>
+                </ul>
+                <li className="mt-2">值应与本地开发环境中的值相同</li>
+                <li className="mt-2">添加变量后重新部署应用</li>
+              </ol>
             </div>
+          )}
+          <div className="mt-4">
+            <Button 
+              onClick={() => loadData()}
+              className={`${jellycatColors.primary} ${jellycatColors.primaryHover} text-white`}
+            >
+              重试加载
+            </Button>
           </div>
         </div>
+      )}
 
-        <div className="flex flex-1">
-          {/* Main content */}
-          <main className="flex-1 container mx-auto px-4 py-4">
-            {/* Search and filter */}
-            <div className="mb-6 flex flex-col sm:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-emerald-400" />
-                <Input
-                  placeholder="Search dishes..."
-                  className="pl-10 border-emerald-200 focus:border-emerald-300 focus:ring-emerald-300 rounded-full"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-              <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center h-64">
+          <div className="w-12 h-12 border-4 border-t-emerald-500 border-b-emerald-700 border-l-emerald-600 border-r-emerald-600 rounded-full animate-spin"></div>
+          <p className="mt-4 text-gray-600">加载数据中...</p>
+        </div>
+      ) : (
+        <div className="relative min-h-screen">
+          {/* 页面主内容 */}
+          {dishes.length === 0 && !loadError ? (
+            <div className="flex flex-col items-center justify-center h-64 bg-gray-50 rounded-md">
+              <p className="text-gray-500 mb-4">暂无菜品数据</p>
+              <Button 
+                onClick={() => setShowAddDishModal(true)}
+                className={`${jellycatColors.primary} ${jellycatColors.primaryHover} text-white`}
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                添加菜品
+              </Button>
+            </div>
+          ) : (
+            <>
+              {/* 搜索栏 */}
+              <div className="mb-6 flex gap-2 sticky top-0 z-10 bg-white p-2 shadow-sm rounded">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+                  <Input
+                    placeholder="搜索菜品..."
+                    className="pl-8"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
                 <Button
-                  variant={activeCategory === null ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setActiveCategory(null)}
-                  className={
-                    activeCategory === null
-                      ? "bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
-                      : "border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                  }
+                  variant="outline"
+                  onClick={() => setShowCategoryModal(true)}
+                  className="flex items-center gap-1"
                 >
-                  All
+                  <Tag className="h-4 w-4" />
+                  <span className="hidden sm:inline">分类管理</span>
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowAddDishModal(true)}
+                  className="flex items-center gap-1"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span className="hidden sm:inline">添加菜品</span>
+                </Button>
+              </div>
+
+              {/* 分类选择区 */}
+              <div className="mb-6 overflow-x-auto whitespace-nowrap pb-2 flex gap-2">
+                <Badge
+                  onClick={() => setActiveCategory(null)}
+                  className={`cursor-pointer px-3 py-1 text-sm ${
+                    activeCategory === null
+                      ? jellycatColors.primary + " text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  全部
+                </Badge>
                 {categories.map((category) => (
-                  <Button
+                  <Badge
                     key={category.id}
-                    variant={activeCategory === category.id ? "default" : "outline"}
-                    size="sm"
-                    className={
-                      activeCategory === category.id
-                        ? `${category.color} text-white rounded-full`
-                        : "border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-                    }
                     onClick={() => setActiveCategory(category.id)}
+                    className={`cursor-pointer px-3 py-1 text-sm ${
+                      activeCategory === category.id
+                        ? category.color + " text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
                   >
                     {category.name}
-                  </Button>
+                  </Badge>
                 ))}
               </div>
-            </div>
 
-            <h2 className="text-2xl font-semibold mb-6 text-emerald-700">
-              {activeCategory
-                ? `${getCategoryById(activeCategory)?.name || "Category"} Menu`
-                : searchTerm
-                  ? "Search Results"
-                  : "Our Menu"}
-            </h2>
-
-            {filteredDishes.length === 0 ? (
-              <div className="text-center py-12">
-                <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Filter className="h-10 w-10 text-emerald-500" />
-                </div>
-                <h3 className="text-xl font-semibold mb-2 text-emerald-700">No dishes found</h3>
-                <p className="text-emerald-600 mb-6">Try changing your search or filter criteria</p>
-                <Button
-                  onClick={() => {
-                    setActiveCategory(null)
-                    setSearchTerm("")
-                  }}
-                  className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
-                >
-                  Clear Filters
-                </Button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredDishes.map((dish) => (
-                  <Card
-                    key={dish.id}
-                    className="overflow-hidden border-emerald-200 rounded-xl shadow-md hover:shadow-lg transition-shadow duration-200"
-                  >
-                    <div className="relative h-48">
-                      <Image src={dish.image || "/placeholder.svg"} alt={dish.name} fill className="object-cover" />
-                      {dish.categoryIds.length > 0 && (
-                        <div className="absolute top-2 right-2 flex flex-wrap gap-1 justify-end max-w-[70%]">
-                          {dish.categoryIds.map((catId) => {
-                            const category = getCategoryById(catId)
+              {/* 菜品列表区 */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-20">
+                {dishes
+                  .filter((dish) => {
+                    // 如果选中了分类，只显示该分类的菜品
+                    if (activeCategory && !dish.categoryIds.includes(activeCategory)) {
+                      return false
+                    }
+                    // 搜索过滤
+                    if (searchTerm && !dish.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+                      return false
+                    }
+                    return true
+                  })
+                  .map((dish) => (
+                    <Card key={dish.id} className="overflow-hidden group">
+                      <div className="relative h-48">
+                        <Image
+                          src={dish.image || "/placeholder.svg"}
+                          alt={dish.name}
+                          fill
+                          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                          className="object-cover"
+                          onError={(e) => {
+                            ;(e.target as HTMLImageElement).src = "/placeholder.svg"
+                          }}
+                        />
+                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            size="icon"
+                            variant="secondary"
+                            className="rounded-full bg-white/70 backdrop-blur-sm w-8 h-8"
+                            onClick={() => startEditDish(dish)}
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <h3 className="font-semibold text-lg">{dish.name}</h3>
+                          <div className="font-bold text-emerald-600">¥{dish.price}</div>
+                        </div>
+                        <p className="text-gray-600 text-sm line-clamp-2 mb-2">{dish.description}</p>
+                        <div className="flex flex-wrap gap-1">
+                          {dish.categoryIds.map((categoryId) => {
+                            const category = getCategoryById(categoryId)
                             return category ? (
-                              <Badge
-                                key={catId}
-                                className={`${category.color} text-white rounded-full px-2`}
-                                variant="secondary"
+                              <span
+                                key={categoryId}
+                                className={`text-xs px-2 py-0.5 rounded-full ${category.color} bg-opacity-20 text-emerald-800`}
                               >
                                 {category.name}
-                              </Badge>
+                              </span>
                             ) : null
                           })}
                         </div>
-                      )}
-                      <div className="absolute top-2 left-2 flex gap-1">
+                      </CardContent>
+                      <CardFooter className="p-4 pt-0 flex justify-between">
                         <Button
-                          variant="destructive"
-                          size="icon"
-                          className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteDish(dish.id);
-                          }}
+                          variant="outline"
+                          size="sm"
+                          className="text-red-600 border-red-200 hover:bg-red-50"
+                          onClick={() => deleteDish(dish.id)}
                         >
-                          <Trash className="h-4 w-4" />
+                          <Trash className="w-4 h-4 mr-1" />
+                          删除
                         </Button>
                         <Button
-                          variant="secondary"
-                          size="icon"
-                          className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            startEditDish(dish);
-                          }}
+                          size="sm"
+                          className={`${jellycatColors.primary} ${jellycatColors.primaryHover} text-white`}
+                          onClick={() => addToCart(dish)}
                         >
-                          <Edit className="h-4 w-4" />
+                          <Plus className="w-4 h-4 mr-1" />
+                          加入
                         </Button>
-                      </div>
-                    </div>
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <h3 className="text-lg font-semibold text-emerald-700">{dish.name}</h3>
-                        <span className="font-bold text-orange-500">${dish.price.toFixed(2)}</span>
-                      </div>
-                      <p className="text-emerald-600 text-sm mb-4">{dish.description}</p>
-                    </CardContent>
-                    <CardFooter className="p-4 pt-0">
-                      <Button
-                        onClick={() => addToCart(dish)}
-                        className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
-                      >
-                        Add to Order
-                      </Button>
-                    </CardFooter>
-                  </Card>
-                ))}
+                      </CardFooter>
+                    </Card>
+                  ))}
               </div>
-            )}
-          </main>
+            </>
+          )}
+        
+          {/* 加菜弹窗 */}
+          <AddDishModal
+            show={showAddDishModal}
+            onClose={() => setShowAddDishModal(false)}
+            newDish={newDish}
+            handleNewDishChange={handleNewDishChange}
+            toggleDishCategory={toggleDishCategory}
+            categories={categories}
+            imagePreview={imagePreview}
+            handleImageChange={handleImageChange}
+            addNewDish={addNewDish}
+          />
 
-          {/* Desktop sidebar cart */}
-          <aside className="hidden lg:block w-80 border-l border-emerald-100 bg-white p-4 sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto">
-            <Cart
-              cart={cart}
-              updateQuantity={updateQuantity}
-              removeFromCart={removeFromCart}
-              totalPrice={totalPrice}
-              submitOrder={submitOrder}
-              getCategoryById={getCategoryById}
-            />
-          </aside>
+          {/* 编辑菜品弹窗 */}
+          <EditDishModal
+            show={showEditDishModal}
+            onClose={() => setShowEditDishModal(false)}
+            dishForm={editDishForm}
+            handleDishChange={handleEditDishChange}
+            toggleDishCategory={toggleEditDishCategory}
+            categories={categories}
+            imagePreview={imagePreview}
+            handleImageChange={handleImageChange}
+            saveDish={saveEditedDish}
+          />
+
+          {/* 管理分类弹窗 */}
+          <CategoryModal
+            show={showCategoryModal}
+            onClose={() => setShowCategoryModal(false)}
+            categories={categories}
+            newCategory={newCategory}
+            handleNewCategoryChange={handleNewCategoryChange}
+            addNewCategory={addNewCategory}
+            deleteCategory={deleteCategory}
+            categoryColors={categoryColors}
+          />
+
+          <div className="flex flex-col min-h-screen bg-emerald-50">
+            {/* 店铺信息 */}
+            <div className="container mx-auto px-4 py-4">
+              <div className="flex justify-between items-center">
+                <h1 className="text-2xl font-bold text-emerald-700">
+                  <span className="text-orange-400">Sunny</span> 点菜平台
+                </h1>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                    onClick={() => setShowAddDishModal(true)}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    加菜
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                    onClick={() => setShowCategoryModal(true)}
+                  >
+                    <Tag className="h-4 w-4 mr-2" />
+                    管理分类
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                    onClick={() => setShowOrderHistory(true)}
+                  >
+                    <History className="h-4 w-4 mr-2" />
+                    历史订单
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                    asChild
+                  >
+                    <Link href="/admin">
+                      管理后台
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-1">
+              {/* Main content */}
+              <main className="flex-1 container mx-auto px-4 py-4">
+                {/* Search and filter */}
+                <div className="mb-6 flex flex-col sm:flex-row gap-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-emerald-400" />
+                    <Input
+                      placeholder="Search dishes..."
+                      className="pl-10 border-emerald-200 focus:border-emerald-300 focus:ring-emerald-300 rounded-full"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
+                    <Button
+                      variant={activeCategory === null ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setActiveCategory(null)}
+                      className={
+                        activeCategory === null
+                          ? "bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
+                          : "border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                      }
+                    >
+                      All
+                    </Button>
+                    {categories.map((category) => (
+                      <Button
+                        key={category.id}
+                        variant={activeCategory === category.id ? "default" : "outline"}
+                        size="sm"
+                        className={
+                          activeCategory === category.id
+                            ? `${category.color} text-white rounded-full`
+                            : "border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
+                        }
+                        onClick={() => setActiveCategory(category.id)}
+                      >
+                        {category.name}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <h2 className="text-2xl font-semibold mb-6 text-emerald-700">
+                  {activeCategory
+                    ? `${getCategoryById(activeCategory)?.name || "Category"} Menu`
+                    : searchTerm
+                      ? "Search Results"
+                      : "Our Menu"}
+                </h2>
+
+                {filteredDishes.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Filter className="h-10 w-10 text-emerald-500" />
+                    </div>
+                    <h3 className="text-xl font-semibold mb-2 text-emerald-700">No dishes found</h3>
+                    <p className="text-emerald-600 mb-6">Try changing your search or filter criteria</p>
+                    <Button
+                      onClick={() => {
+                        setActiveCategory(null)
+                        setSearchTerm("")
+                      }}
+                      className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
+                    >
+                      Clear Filters
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredDishes.map((dish) => (
+                      <Card
+                        key={dish.id}
+                        className="overflow-hidden border-emerald-200 rounded-xl shadow-md hover:shadow-lg transition-shadow duration-200"
+                      >
+                        <div className="relative h-48">
+                          <Image src={dish.image || "/placeholder.svg"} alt={dish.name} fill className="object-cover" />
+                          {dish.categoryIds.length > 0 && (
+                            <div className="absolute top-2 right-2 flex flex-wrap gap-1 justify-end max-w-[70%]">
+                              {dish.categoryIds.map((catId) => {
+                                const category = getCategoryById(catId)
+                                return category ? (
+                                  <Badge
+                                    key={catId}
+                                    className={`${category.color} text-white rounded-full px-2`}
+                                    variant="secondary"
+                                  >
+                                    {category.name}
+                                  </Badge>
+                                ) : null
+                              })}
+                            </div>
+                          )}
+                          <div className="absolute top-2 left-2 flex gap-1">
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteDish(dish.id);
+                              }}
+                            >
+                              <Trash className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="icon"
+                              className="h-8 w-8 rounded-full opacity-80 hover:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startEditDish(dish);
+                              }}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <h3 className="text-lg font-semibold text-emerald-700">{dish.name}</h3>
+                            <span className="font-bold text-orange-500">${dish.price.toFixed(2)}</span>
+                          </div>
+                          <p className="text-emerald-600 text-sm mb-4">{dish.description}</p>
+                        </CardContent>
+                        <CardFooter className="p-4 pt-0">
+                          <Button
+                            onClick={() => addToCart(dish)}
+                            className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-full"
+                          >
+                            Add to Order
+                          </Button>
+                        </CardFooter>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </main>
+
+              {/* Desktop sidebar cart */}
+              <aside className="hidden lg:block w-80 border-l border-emerald-100 bg-white p-4 sticky top-[73px] h-[calc(100vh-73px)] overflow-y-auto">
+                <Cart
+                  cart={cart}
+                  updateQuantity={updateQuantity}
+                  removeFromCart={removeFromCart}
+                  totalPrice={totalPrice}
+                  submitOrder={submitOrder}
+                  getCategoryById={getCategoryById}
+                />
+              </aside>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

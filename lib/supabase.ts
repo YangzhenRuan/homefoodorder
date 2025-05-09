@@ -1,11 +1,35 @@
 import { createClient } from '@supabase/supabase-js'
 
 // 从环境变量中获取Supabase配置
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+// 检查环境变量是否存在
+if (!supabaseUrl || !supabaseKey) {
+  console.error('缺少Supabase环境变量! 请确保设置了NEXT_PUBLIC_SUPABASE_URL和NEXT_PUBLIC_SUPABASE_ANON_KEY。')
+}
 
 // 创建Supabase客户端
-export const supabase = createClient(supabaseUrl, supabaseKey)
+export const supabase = createClient(
+  supabaseUrl || '',
+  supabaseKey || ''
+)
+
+// 检查Supabase连接是否有效的辅助函数
+export const checkSupabaseConnection = async () => {
+  try {
+    const { data, error } = await supabase.from('categories').select('count').limit(1)
+    if (error) throw error
+    return { success: true }
+  } catch (error: any) {
+    console.error('Supabase连接测试失败:', error.message)
+    return { 
+      success: false, 
+      error: error.message,
+      details: !supabaseUrl || !supabaseKey ? '未找到Supabase环境变量' : '环境变量已设置但连接失败'
+    }
+  }
+}
 
 // 菜品分类表操作
 export const categoriesTable = {

@@ -200,16 +200,47 @@ export default function FoodOrderingPage() {
   // 上传图片到Supabase存储并返回URL
   const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishes'): Promise<string> => {
     if (!imageDataUrl || !imageDataUrl.startsWith('data:image')) {
+      console.error('无效的图片数据');
       return '/placeholder.svg';
     }
     
     try {
-      // 生成文件名
-      const fileName = `${Date.now()}.jpg`;
+      // 检查存储桶是否存在
+      const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
+      const bucketExists = buckets?.some(bucket => bucket.name === 'food-images');
+      
+      if (bucketError) {
+        console.error('获取存储桶列表错误:', bucketError);
+        throw bucketError;
+      }
+      
+      // 如果存储桶不存在，则创建
+      if (!bucketExists) {
+        const { error: createBucketError } = await supabase.storage.createBucket('food-images', {
+          public: true, // 设置为公开访问
+          fileSizeLimit: 5242880, // 5MB限制
+        });
+        
+        if (createBucketError) {
+          console.error('创建存储桶错误:', createBucketError);
+          throw createBucketError;
+        }
+        
+        console.log('成功创建food-images存储桶');
+      }
+      
+      // 生成文件名 - 添加随机字符串避免并发冲突
+      const randomStr = Math.random().toString(36).substring(2, 8);
+      const fileName = `${Date.now()}_${randomStr}.jpg`;
       const filePath = `${prefix}/${fileName}`;
       
       // 将base64格式的图片转换为Blob
       const base64Data = imageDataUrl.split(',')[1];
+      if (!base64Data) {
+        console.error('无法解析base64数据');
+        return '/placeholder.svg';
+      }
+      
       const blob = await fetch(`data:image/jpeg;base64,${base64Data}`).then(res => res.blob());
       
       // 上传图片到Supabase存储
@@ -217,11 +248,15 @@ export default function FoodOrderingPage() {
         .from('food-images')
         .upload(filePath, blob, {
           contentType: 'image/jpeg',
-          upsert: false
+          upsert: true // 修改为true，允许覆盖
         });
       
       if (error) {
         console.error('上传图片错误:', error);
+        console.error('错误详情:', {
+          message: error.message,
+          name: error.name
+        });
         return '/placeholder.svg';
       }
       
@@ -230,9 +265,11 @@ export default function FoodOrderingPage() {
         .from('food-images')
         .getPublicUrl(filePath);
       
+      console.log('图片上传成功:', publicUrl.publicUrl);
       return publicUrl.publicUrl;
-    } catch (error) {
+    } catch (error: any) {
       console.error('处理图片错误:', error);
+      console.error('错误详情:', error.message || '未知错误');
       return '/placeholder.svg';
     }
   };
@@ -708,6 +745,7 @@ export default function FoodOrderingPage() {
     if (!file) return
 
     setImageFile(file)
+    setIsSubmitting(true); // 添加加载状态
 
     try {
       // 处理并压缩图片
@@ -717,6 +755,8 @@ export default function FoodOrderingPage() {
       console.error('图片处理失败:', error);
       alert('图片处理失败，请尝试使用较小的图片');
       setImageFile(null);
+    } finally {
+      setIsSubmitting(false); // 结束加载状态
     }
   }
 
@@ -726,6 +766,7 @@ export default function FoodOrderingPage() {
     if (!file) return
 
     setMealImage(file)
+    setIsSubmitting(true); // 添加加载状态
 
     try {
       // 处理并压缩图片
@@ -735,6 +776,8 @@ export default function FoodOrderingPage() {
       console.error('图片处理失败:', error);
       alert('图片处理失败，请尝试使用较小的图片');
       setMealImage(null);
+    } finally {
+      setIsSubmitting(false); // 结束加载状态
     }
   }
 

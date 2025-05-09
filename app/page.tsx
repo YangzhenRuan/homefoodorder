@@ -188,6 +188,144 @@ export default function FoodOrderingPage() {
     image: "",
     categoryIds: [],
   });
+  
+  // 转换操作状态
+  const [showConvertModal, setShowConvertModal] = useState(false);
+  const [convertProgress, setConvertProgress] = useState({ current: 0, total: 0 });
+  
+  // 上传图片到Supabase存储并返回URL
+  const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishes'): Promise<string> => {
+    if (!imageDataUrl || !imageDataUrl.startsWith('data:image')) {
+      return '/placeholder.svg';
+    }
+    
+    try {
+      // 生成文件名
+      const fileName = `${Date.now()}.jpg`;
+      const filePath = `${prefix}/${fileName}`;
+      
+      // 将base64格式的图片转换为Blob
+      const base64Data = imageDataUrl.split(',')[1];
+      const blob = await fetch(`data:image/jpeg;base64,${base64Data}`).then(res => res.blob());
+      
+      // 上传图片到Supabase存储
+      const { data, error } = await supabase.storage
+        .from('food-images')
+        .upload(filePath, blob, {
+          contentType: 'image/jpeg',
+          upsert: false
+        });
+      
+      if (error) {
+        console.error('上传图片错误:', error);
+        return '/placeholder.svg';
+      }
+      
+      // 获取图片的公共URL
+      const { data: publicUrl } = supabase.storage
+        .from('food-images')
+        .getPublicUrl(filePath);
+      
+      return publicUrl.publicUrl;
+    } catch (error) {
+      console.error('处理图片错误:', error);
+      return '/placeholder.svg';
+    }
+  };
+  
+  // 用于将现有的base64图片转换为URL引用的工具函数
+  const convertExistingBase64ToUrl = async (dish: Dish): Promise<Dish> => {
+    // 如果不是base64图片，直接返回
+    if (!dish.image || !dish.image.startsWith('data:image')) {
+      return dish;
+    }
+    
+    try {
+      // 上传base64图片并获取URL
+      const imageUrl = await uploadImageToStorage(dish.image);
+      
+      // 如果上传成功，更新数据库记录
+      if (imageUrl && imageUrl !== '/placeholder.svg') {
+        // 查找该菜品的所有记录
+        const { data, error } = await supabase
+          .from('dishes')
+          .select('*')
+          .eq('id', dish.id);
+        
+        if (error) {
+          console.error('查询菜品错误:', error);
+          return dish;
+        }
+        
+        // 更新每条记录的图片URL
+        if (data && data.length > 0) {
+          for (const record of data) {
+            await supabase
+              .from('dishes')
+              .update({ image: imageUrl })
+              .eq('id', record.id);
+          }
+          
+          // 返回更新后的菜品
+          return {
+            ...dish,
+            image: imageUrl
+          };
+        }
+      }
+      
+      return dish;
+    } catch (error) {
+      console.error('转换base64图片失败:', error);
+      return dish;
+    }
+  };
+  
+  // 批量转换菜品base64图片为URL引用
+  const convertAllBase64Images = async () => {
+    if (!dishes.length) return;
+    
+    setIsSubmitting(true);
+    setShowConvertModal(true);
+    setConvertProgress({ current: 0, total: 0 });
+    
+    try {
+      // 找出所有使用base64图片的菜品
+      const base64Dishes = dishes.filter(dish => dish.image?.startsWith('data:image'));
+      
+      if (base64Dishes.length === 0) {
+        alert('没有发现需要转换的base64图片');
+        setShowConvertModal(false);
+        return;
+      }
+      
+      const total = base64Dishes.length;
+      setConvertProgress({ current: 0, total });
+      
+      let converted = 0;
+      
+      // 逐个转换
+      for (const [index, dish] of base64Dishes.entries()) {
+        setConvertProgress({ current: index + 1, total });
+        
+        const updatedDish = await convertExistingBase64ToUrl(dish);
+        
+        // 更新本地状态
+        if (updatedDish.image !== dish.image) {
+          setDishes(prev => prev.map(d => d.id === dish.id ? updatedDish : d));
+          converted++;
+        }
+      }
+      
+      alert(`转换完成! 成功转换 ${converted}/${total} 个图片为URL引用。`);
+    } catch (error) {
+      console.error('批量转换图片错误:', error);
+      alert('转换图片过程中出错，请查看控制台获取详情');
+    } finally {
+      setIsSubmitting(false);
+      setShowConvertModal(false);
+    }
+  };
 
   // 使用useEffect加载数据
   useEffect(() => {
@@ -512,42 +650,20 @@ export default function FoodOrderingPage() {
     if (!selectedOrderId || !mealImagePreview || !mealImage) return
 
     try {
-      // 检查图片大小
-      if (mealImagePreview.length > 200000) { // 约200KB
-        alert("图片太大，请使用较小的图片或减小图片尺寸");
-        return;
+      setIsSubmitting(true);
+      
+      // 上传图片到存储并获取URL
+      const imageUrl = await uploadImageToStorage(mealImagePreview, `orders/${selectedOrderId}`);
+      
+      if (!imageUrl || imageUrl === '/placeholder.svg') {
+        throw new Error('图片上传失败');
       }
-      
-      // 将图片上传到Supabase存储
-      const fileName = `${Date.now()}.jpg`;
-      const filePath = `${selectedOrderId}/${fileName}`;
-      
-      // 将base64格式的图片转换为Blob
-      const base64Data = mealImagePreview.split(',')[1];
-      const blob = await fetch(`data:image/jpeg;base64,${base64Data}`).then(res => res.blob());
-      
-      // 上传图片到Supabase存储
-      const { data, error } = await supabase.storage
-        .from('meal-images')
-        .upload(filePath, blob, {
-          contentType: 'image/jpeg',
-          upsert: false
-        });
-      
-      if (error) {
-        throw error;
-      }
-      
-      // 获取图片的公共URL
-      const { data: publicUrl } = supabase.storage
-        .from('meal-images')
-        .getPublicUrl(filePath);
       
       // 更新订单表中的图片记录
       const { error: updateError } = await supabase
         .from('orders')
         .update({
-          images: [...(orderHistory.find(o => o.id === selectedOrderId)?.images || []), publicUrl.publicUrl]
+          images: [...(orderHistory.find(o => o.id === selectedOrderId)?.images || []), imageUrl]
         })
         .eq('id', selectedOrderId);
       
@@ -560,7 +676,7 @@ export default function FoodOrderingPage() {
         prev.map((order) =>
           order.id === selectedOrderId ? { 
             ...order, 
-            images: [...order.images, publicUrl.publicUrl] 
+            images: [...order.images, imageUrl] 
           } : order
         )
       );
@@ -576,6 +692,8 @@ export default function FoodOrderingPage() {
     } catch (error) {
       console.error("上传图片失败:", error);
       alert("上传图片失败，请重试");
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -612,21 +730,12 @@ export default function FoodOrderingPage() {
     }
 
     try {
-      // Use image preview if available, otherwise use placeholder
-      const dishImage = imagePreview || "/placeholder.svg";
+      setIsSubmitting(true);
       
-      // 确保图片不是base64编码，或者如果是base64，确保它不太大
-      let finalImageUrl = "/placeholder.svg";
-      if (dishImage.startsWith('data:image')) {
-        // 如果是base64图片，检查大小 - 如果超过某个阈值，使用占位图
-        if (dishImage.length > 200000) { // 约200KB
-          console.warn("图片太大，使用占位图");
-          finalImageUrl = "/placeholder.svg";
-        } else {
-          finalImageUrl = dishImage;
-        }
-      } else {
-        finalImageUrl = dishImage;
+      // 上传图片并获取URL
+      let imageUrl = '/placeholder.svg';
+      if (imagePreview && imagePreview.startsWith('data:image')) {
+        imageUrl = await uploadImageToStorage(imagePreview);
       }
 
       // 同步到数据库
@@ -634,7 +743,7 @@ export default function FoodOrderingPage() {
         name: newDish.name,
         description: newDish.description,
         price: newDish.price,
-        image: finalImageUrl,
+        image: imageUrl,
         category_ids: newDish.categoryIds
       });
       
@@ -642,7 +751,7 @@ export default function FoodOrderingPage() {
         name: newDish.name,
         description: newDish.description,
         price: newDish.price,
-        image: finalImageUrl,
+        image: imageUrl,
         category_ids: newDish.categoryIds
       });
       
@@ -656,7 +765,7 @@ export default function FoodOrderingPage() {
           name: newDish.name,
           description: newDish.description,
           price: newDish.price,
-          image: finalImageUrl,
+          image: imageUrl,
           categoryIds: newDish.categoryIds,
         };
         
@@ -688,6 +797,8 @@ export default function FoodOrderingPage() {
       if (error.hint) errorDetail += ` 提示: ${error.hint}.`;
       
       alert(`添加菜品失败: ${errorDetail || '未知错误'}`);
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -883,21 +994,19 @@ export default function FoodOrderingPage() {
     }
 
     try {
-      // 使用图片预览或保留原图
-      const dishImage = imagePreview || editDishForm.image;
+      setIsSubmitting(true);
       
-      // 确保图片不是base64编码，或者如果是base64，确保它不太大
-      let finalImageUrl = "/placeholder.svg";
-      if (dishImage.startsWith('data:image')) {
-        // 如果是base64图片，检查大小 - 如果超过某个阈值，使用占位图
-        if (dishImage.length > 200000) { // 约200KB
-          console.warn("图片太大，使用占位图");
-          finalImageUrl = "/placeholder.svg";
-        } else {
-          finalImageUrl = dishImage;
-        }
-      } else {
-        finalImageUrl = dishImage;
+      // 上传图片并获取URL
+      let imageUrl = editDishForm.image;
+      
+      // 如果图片预览是新的base64图片，上传并使用新URL
+      if (imagePreview && imagePreview.startsWith('data:image') && imagePreview !== editDishForm.image) {
+        imageUrl = await uploadImageToStorage(imagePreview);
+      }
+      
+      // 确保有图片URL
+      if (!imageUrl || imageUrl === '') {
+        imageUrl = '/placeholder.svg';
       }
 
       // 先删除原有菜品
@@ -908,7 +1017,7 @@ export default function FoodOrderingPage() {
         name: editDishForm.name,
         description: editDishForm.description,
         price: editDishForm.price,
-        image: finalImageUrl,
+        image: imageUrl,
         category_ids: editDishForm.categoryIds
       });
 
@@ -924,7 +1033,7 @@ export default function FoodOrderingPage() {
             name: editDishForm.name,
             description: editDishForm.description,
             price: editDishForm.price,
-            image: finalImageUrl,
+            image: imageUrl,
             categoryIds: editDishForm.categoryIds,
           };
           return [...filtered, updatedDish];
@@ -1346,8 +1455,42 @@ export default function FoodOrderingPage() {
               管理后台
             </Button>
           </Link>
+          <Button
+            variant="outline"
+            className="flex items-center gap-1 bg-purple-100 text-purple-700 border-purple-300 hover:bg-purple-200"
+            onClick={convertAllBase64Images}
+            disabled={isSubmitting}
+          >
+            <Camera className="w-4 h-4" />
+            <span className="hidden sm:inline">转换图片</span>
+          </Button>
         </div>
       </h1>
+
+      {/* 显示转换进度的模态框 */}
+      {showConvertModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6">
+            <h3 className="text-lg font-medium mb-4">正在转换图片...</h3>
+            <div className="mb-4">
+              <div className="h-2 bg-gray-200 rounded-full">
+                <div 
+                  className="h-2 bg-emerald-500 rounded-full" 
+                  style={{ 
+                    width: `${(convertProgress.current / convertProgress.total) * 100}%` 
+                  }}
+                ></div>
+              </div>
+              <p className="text-sm text-gray-600 mt-2">
+                {convertProgress.current} / {convertProgress.total} 完成
+              </p>
+            </div>
+            <p className="text-sm text-gray-600">
+              正在将base64图片转换为URL引用，请耐心等待...
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* 添加错误提示组件 */}
       {loadError && (
@@ -1553,6 +1696,7 @@ export default function FoodOrderingPage() {
             imagePreview={imagePreview}
             handleImageChange={handleImageChange}
             addNewDish={addNewDish}
+            isSubmitting={isSubmitting}
           />
 
           {/* 编辑菜品弹窗 */}
@@ -1566,6 +1710,7 @@ export default function FoodOrderingPage() {
             imagePreview={imagePreview}
             handleImageChange={handleImageChange}
             saveDish={saveEditedDish}
+            isSubmitting={isSubmitting}
           />
 
           {/* 管理分类弹窗 */}
@@ -1894,6 +2039,7 @@ function AddDishModal({
   imagePreview,
   handleImageChange,
   addNewDish,
+  isSubmitting,
 }: {
   show: boolean
   onClose: () => void
@@ -1904,6 +2050,7 @@ function AddDishModal({
   imagePreview: string
   handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   addNewDish: () => void
+  isSubmitting: boolean
 }) {
   if (!show) return null
 
@@ -2011,8 +2158,19 @@ function AddDishModal({
         </div>
         
         <div className="p-4 border-t border-gray-200 flex justify-end">
-          <Button onClick={addNewDish} className="bg-emerald-500 hover:bg-emerald-600 text-white">
-            保存菜品
+          <Button 
+            onClick={addNewDish} 
+            className="bg-emerald-500 hover:bg-emerald-600 text-white"
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <>
+                <div className="mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                保存中...
+              </>
+            ) : (
+              "保存菜品"
+            )}
           </Button>
         </div>
       </div>
@@ -2031,6 +2189,7 @@ function EditDishModal({
   imagePreview,
   handleImageChange,
   saveDish,
+  isSubmitting,
 }: {
   show: boolean
   onClose: () => void
@@ -2041,6 +2200,7 @@ function EditDishModal({
   imagePreview: string
   handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   saveDish: () => void
+  isSubmitting: boolean
 }) {
   if (!show) return null
 
@@ -2148,8 +2308,19 @@ function EditDishModal({
         </div>
         
         <div className="p-4 border-t border-gray-200 flex justify-end">
-          <Button onClick={saveDish} className="bg-emerald-500 hover:bg-emerald-600 text-white">
-            保存更改
+          <Button 
+            onClick={saveDish} 
+            className="bg-emerald-500 hover:bg-emerald-600 text-white"
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <>
+                <div className="mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                保存中...
+              </>
+            ) : (
+              "保存更改"
+            )}
           </Button>
         </div>
       </div>

@@ -12,6 +12,7 @@ import Link from 'next/link';
 export default function StorageAdminPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
+  const [isFixingAdmin, setIsFixingAdmin] = useState(false);
   const [storageStatus, setStorageStatus] = useState<{
     checked: boolean;
     ready: boolean;
@@ -67,6 +68,34 @@ export default function StorageAdminPage() {
       });
     } finally {
       setIsFixing(false);
+    }
+  };
+
+  // 使用管理员权限修复RLS策略
+  const fixRlsPolicyWithAdmin = async () => {
+    setIsFixingAdmin(true);
+    setFixResult(null);
+
+    try {
+      const response = await fetch('/api/fix-storage-rls-root');
+      const data = await response.json();
+
+      setFixResult({
+        success: data.success,
+        message: data.message
+      });
+
+      // 如果修复成功，重新检查存储状态
+      if (data.success) {
+        setTimeout(checkStorage, 1000);
+      }
+    } catch (error: any) {
+      setFixResult({
+        success: false,
+        message: `管理员请求失败: ${error.message || '未知错误'}`
+      });
+    } finally {
+      setIsFixingAdmin(false);
     }
   };
 
@@ -151,20 +180,37 @@ export default function StorageAdminPage() {
                 )}
               </Button>
               
-              <Button
-                onClick={fixRlsPolicy}
-                disabled={isFixing || isLoading}
-                className="bg-emerald-500 hover:bg-emerald-600 text-white"
-              >
-                {isFixing ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    修复中...
-                  </>
-                ) : (
-                  '修复RLS策略'
-                )}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={fixRlsPolicy}
+                  disabled={isFixing || isFixingAdmin || isLoading}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                >
+                  {isFixing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      修复中...
+                    </>
+                  ) : (
+                    '修复RLS策略'
+                  )}
+                </Button>
+                
+                <Button
+                  onClick={fixRlsPolicyWithAdmin}
+                  disabled={isFixing || isFixingAdmin || isLoading}
+                  className="bg-purple-600 hover:bg-purple-700 text-white"
+                >
+                  {isFixingAdmin ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      管理员修复中...
+                    </>
+                  ) : (
+                    '使用管理员权限修复'
+                  )}
+                </Button>
+              </div>
             </CardFooter>
           </Card>
 
@@ -217,19 +263,27 @@ export default function StorageAdminPage() {
                   <li>"无法创建存储桶: new row violates row-level security policy" - 这表示当前用户没有向storage.objects表插入数据的权限。</li>
                   <li>"无法上传到存储桶" - 可能是RLS策略或权限问题。</li>
                   <li>"无法访问文件" - 可能是RLS的SELECT策略有问题。</li>
+                  <li>"存储桶不存在" - 需要在Supabase控制台手动创建名为'food-images'的存储桶。</li>
                 </ul>
               </div>
               
               <div className="space-y-2">
                 <h3 className="font-medium">修复方法:</h3>
-                <p>点击"修复RLS策略"按钮会执行以下操作:</p>
                 <ol className="list-decimal pl-5 space-y-1">
-                  <li>检查并创建(如果不存在)"food-images"存储桶</li>
-                  <li>为storage.objects表添加允许匿名访问的RLS策略</li>
-                  <li>授予anon角色对storage.objects表的权限</li>
-                  <li>进行测试上传以验证配置是否正确</li>
+                  <li>首先登录Supabase控制台，手动创建名为'food-images'的公共存储桶</li>
+                  <li>然后点击"修复RLS策略"按钮设置正确的访问权限</li>
+                  <li>如果普通修复不起作用，请点击"使用管理员权限修复"（需要设置环境变量）</li>
+                  <li>最后，在存储桶的Policies标签中确认已设置了所有必要的存储桶权限</li>
                 </ol>
               </div>
+              
+              <Alert variant="destructive" className="bg-amber-50">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>注意</AlertTitle>
+                <AlertDescription>
+                  使用管理员权限修复需要在环境变量中设置SUPABASE_SERVICE_ROLE_KEY。此密钥应保密，不应暴露在客户端代码中。
+                </AlertDescription>
+              </Alert>
             </CardContent>
           </Card>
         </div>

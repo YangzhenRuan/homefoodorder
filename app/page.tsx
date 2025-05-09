@@ -91,7 +91,7 @@ const categoryColors = [
 // 新增导入Supabase客户端和表操作函数
 import { supabase, categoriesTable, dishesTable, ordersTable, checkSupabaseConnection } from "@/lib/supabase"
 // 添加图片上传相关函数的导入
-import { processImage, uploadImageToStorage, uploadWithRetry, checkStorageAvailability as checkStorage } from "../lib/imageUpload"
+import { processImage, uploadImageToStorage, uploadWithRetry } from "../lib/imageUpload"
 
 export default function FoodOrderingPage() {
   const [dishes, setDishes] = useState<Dish[]>([])
@@ -156,113 +156,59 @@ export default function FoodOrderingPage() {
   const [isAutoConverting, setIsAutoConverting] = useState(false);
   
   // 添加存储验证状态
-  const [storageStatus, setStorageStatus] = useState<{
-    checked: boolean;
-    ready: boolean;
-    message?: string;
-  }>({
-    checked: false,
-    ready: false
-  });
+  // const [storageStatus, setStorageStatus] = useState<{
+  //   checked: boolean;
+  //   ready: boolean;
+  //   message?: string;
+  // }>({
+  //   checked: false,
+  //   ready: false
+  // });
 
   // 验证Supabase存储是否可用 (Moved inside the component)
-  const checkStorageAvailability = async () => {
+  // const checkStorageAvailability = async () => { ... }; // Remove this entire function
+
+  // 新增函数：从Supabase获取订单历史
+  const fetchOrderHistory = async () => {
     try {
-      // 检查storage API是否可用
-      const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false })
       
-      if (bucketError) {
-        console.error('Supabase存储验证失败:', bucketError);
-        setStorageStatus({
-          checked: true,
-          ready: false,
-          message: `存储服务不可用: ${bucketError.message}`
-        });
-        return false;
+      if (error) throw error
+      
+      if (data) {
+        // 转换Supabase订单数据为前端OrderHistory格式
+        const formattedOrders: OrderHistory[] = data.map(order => ({
+          id: order.id,
+          items: order.items.map((item: any) => ({
+            dish: {
+              id: item.dishId || 0,
+              name: item.dishName,
+              description: '',
+              price: item.price,
+              image: '/placeholder.svg',
+              categoryIds: []
+            },
+            quantity: item.quantity
+          })),
+          customerInfo: {
+            name: order.customer_name,
+            note: order.notes || ''
+          },
+          totalPrice: order.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0),
+          orderDate: new Date(order.created_at),
+          images: order.images || []
+        }))
+        
+        setOrderHistory(formattedOrders)
       }
-      
-      // 检查food-images存储桶是否存在
-      const bucketExists = buckets?.some(bucket => bucket.name === 'food-images');
-      
-      if (!bucketExists) {
-        // 尝试创建存储桶
-        try {
-          const { error: createError } = await supabase.storage.createBucket('food-images', {
-            public: true,
-            fileSizeLimit: 5242880 // 5MB
-          });
-          
-          if (createError) {
-            console.error('创建存储桶失败:', createError);
-            setStorageStatus({
-              checked: true,
-              ready: false,
-              message: `无法创建存储桶: ${createError.message}`
-            });
-            return false;
-          }
-          
-          console.log('成功创建food-images存储桶');
-        } catch (error: any) {
-          console.error('创建存储桶时发生错误:', error);
-          setStorageStatus({
-            checked: true,
-            ready: false,
-            message: `创建存储桶时出错: ${error.message || '未知错误'}`
-          });
-          return false;
-        }
-      }
-      
-      // 测试上传小型测试文件
-      try {
-        const testBlob = new Blob(['test'], { type: 'text/plain' });
-        const testPath = `test/storage-test-${Date.now()}.txt`;
-        
-        const { error: uploadError } = await supabase.storage
-          .from('food-images')
-          .upload(testPath, testBlob, { upsert: true });
-        
-        if (uploadError) {
-          console.error('测试上传失败:', uploadError);
-          setStorageStatus({
-            checked: true,
-            ready: false,
-            message: `测试上传失败: ${uploadError.message}`
-          });
-          return false;
-        }
-        
-        // 测试成功后删除测试文件
-        await supabase.storage
-          .from('food-images')
-          .remove([testPath]);
-        
-        setStorageStatus({
-          checked: true,
-          ready: true
-        });
-        return true;
-      } catch (error: any) {
-        console.error('测试上传时发生错误:', error);
-        setStorageStatus({
-          checked: true,
-          ready: false,
-          message: `测试上传时出错: ${error.message || '未知错误'}`
-        });
-        return false;
-      }
-    } catch (error: any) {
-      console.error('验证存储时发生错误:', error);
-      setStorageStatus({
-        checked: true,
-        ready: false,
-        message: `验证存储时出错: ${error.message || '未知错误'}`
-      });
-      return false;
+    } catch (error) {
+      console.error("获取订单历史失败:", error)
     }
-  };
-  
+  }
+
   // 使用useEffect加载数据
   useEffect(() => {
     loadData();
@@ -365,13 +311,13 @@ export default function FoodOrderingPage() {
     }
     
     // 在加载数据完成后验证存储服务
-    try {
-      // 现在调用的是组件内部的 checkStorageAvailability
-      await checkStorageAvailability();
-    } catch (error) {
-      console.error('存储验证失败:', error);
-    }
-  };
+    // try {
+    //   // 现在调用的是组件内部的 checkStorageAvailability
+    //   await checkStorageAvailability();
+    // } catch (error) {
+    //   console.error('存储验证失败:', error);
+    // }
+  }; // Removed the semicolon here
 
   // 只在开发环境保存到localStorage的逻辑，发布后可以移除
   useEffect(() => {
@@ -454,45 +400,7 @@ export default function FoodOrderingPage() {
   }
 
   // 新增函数：从Supabase获取订单历史
-  const fetchOrderHistory = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .order('created_at', { ascending: false })
-      
-      if (error) throw error
-      
-      if (data) {
-        // 转换Supabase订单数据为前端OrderHistory格式
-        const formattedOrders: OrderHistory[] = data.map(order => ({
-          id: order.id,
-          items: order.items.map((item: any) => ({
-            dish: {
-              id: item.dishId || 0,
-              name: item.dishName,
-              description: '',
-              price: item.price,
-              image: '/placeholder.svg',
-              categoryIds: []
-            },
-            quantity: item.quantity
-          })),
-          customerInfo: {
-            name: order.customer_name,
-            note: order.notes || ''
-          },
-          totalPrice: order.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0),
-          orderDate: new Date(order.created_at),
-          images: order.images || []
-        }))
-        
-        setOrderHistory(formattedOrders)
-      }
-    } catch (error) {
-      console.error("获取订单历史失败:", error)
-    }
-  }
+  // const fetchOrderHistory = async () => { ... } // This function is now moved up
 
   // Confirm order
   const confirmOrder = async () => {
@@ -566,25 +474,6 @@ export default function FoodOrderingPage() {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // 检查存储状态
-    if (!storageStatus.checked) {
-      try {
-        // 调用组件内部的 checkStorageAvailability
-        const isStorageReady = await checkStorageAvailability();
-        if (!isStorageReady) {
-          alert('无法上传图片: 存储服务不可用。请联系管理员或稍后再试。');
-          return;
-        }
-      } catch (error) {
-        console.error('验证存储失败:', error);
-        alert('无法验证存储服务，图片上传可能不可用。');
-        // Don't return here, let the user try to upload anyway if they want.
-      }
-    } else if (!storageStatus.ready) {
-      alert(`无法上传图片: ${storageStatus.message || '存储服务不可用'}`);
-      return;
-    }
-
     setImageFile(file)
     setIsSubmitting(true); // 添加加载状态
 
@@ -622,17 +511,12 @@ export default function FoodOrderingPage() {
     }
   }
   
-  // 上传图片到Supabase存储并返回URL (This is now from lib/imageUpload, keeping for context if needed by other functions below)
-  // const uploadImageToStorage = async (imageDataUrl: string, prefix = 'dishes'): Promise<string> => { ... }
-  
   // 用于将现有的base64图片转换为URL引用的工具函数
   const convertExistingBase64ToUrl = async (dish: Dish): Promise<Dish> => {
     // 如果不是base64图片，直接返回
     if (!dish.image || !dish.image.startsWith('data:image')) {
       return dish;
     }
-    
-    // const originalImage = dish.image; // Not used
     
     try {
       // 上传base64图片并获取URL - Uses imported uploadWithRetry which uses imported uploadImageToStorage
@@ -674,9 +558,6 @@ export default function FoodOrderingPage() {
       return dish; // Return original dish on error
     }
   };
-  
-  // 添加重试机制的上传函数 (This is now from lib/imageUpload, keeping for context if needed by other functions below)
-  // const uploadWithRetry = async (imageDataUrl: string, prefix = 'dishes', retries = 2): Promise<string> => { ... }
 
   // 自动转换base64图片为URL引用
   const autoConvertBase64Images = async (base64Dishes: Dish[]) => {
@@ -873,10 +754,23 @@ export default function FoodOrderingPage() {
     try {
       setIsSubmitting(true);
       
-      // 上传图片并获取URL - Uses imported uploadImageToStorage
+      // 上传图片并获取URL
       let imageUrl = '/placeholder.svg';
       if (imagePreview && imagePreview.startsWith('data:image')) {
-        imageUrl = await uploadImageToStorage(imagePreview);
+        try {
+          // 直接上传图片，不再检查存储状态
+          const uploadedUrl = await uploadImageToStorage(imagePreview);
+          // 确保返回的URL有效
+          if (uploadedUrl && uploadedUrl !== '/placeholder.svg') {
+            imageUrl = uploadedUrl;
+          } else {
+            console.warn('图片上传成功但返回了无效URL，将使用base64格式');
+            imageUrl = imagePreview; // 使用base64格式作为备选
+          }
+        } catch (uploadError) {
+          console.error('图片上传到存储桶失败，将使用base64格式:', uploadError);
+          imageUrl = imagePreview; // 使用base64格式作为备选
+        }
       }
 
       // 同步到数据库
@@ -1147,7 +1041,21 @@ export default function FoodOrderingPage() {
       
       // 如果图片预览是新的base64图片，上传并使用新URL
       if (imagePreview && imagePreview.startsWith('data:image') && imagePreview !== editDishForm.image) {
-        imageUrl = await uploadImageToStorage(imagePreview);
+        try {
+          // 直接上传，不检查存储状态
+          const uploadedUrl = await uploadImageToStorage(imagePreview);
+          if (uploadedUrl && uploadedUrl !== '/placeholder.svg') {
+            imageUrl = uploadedUrl;
+          } else {
+            // 如果上传失败，保留base64格式
+            console.warn('图片上传失败，使用base64格式');
+            imageUrl = imagePreview;
+          }
+        } catch (uploadError) {
+          console.error('图片上传失败:', uploadError);
+          // 失败时使用base64格式
+          imageUrl = imagePreview;
+        }
       }
       
       // 确保有图片URL
@@ -1672,26 +1580,6 @@ export default function FoodOrderingPage() {
             >
               <Camera className="h-4 w-4 mr-2" />
               手动转换图片
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-full"
-              asChild
-            >
-              <Link href="/admin">
-                管理后台
-              </Link>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-blue-300 text-blue-700 hover:bg-blue-50 rounded-full"
-              asChild
-            >
-              <Link href="/storage-admin">
-                存储管理
-              </Link>
             </Button>
           </div>
         </div>
